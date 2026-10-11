@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Paceglass Admin</title>
+  <meta name="description" content="Manage who can use Paceglass.">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0A1B45">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="admin">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="appbar">
+    <div class="appbar-inner wide">
+      <a class="brand" href="./" aria-label="Back to Paceglass">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M7 6h18l-2.2 19.2A2.5 2.5 0 0 1 20.3 27.5h-8.6a2.5 2.5 0 0 1-2.5-2.3L7 6Z" fill="none" stroke="#1d4ed8" stroke-width="2.4" stroke-linejoin="round"/><path d="M8.4 16h15.2l-1 9.1a1.6 1.6 0 0 1-1.6 1.4h-10a1.6 1.6 0 0 1-1.6-1.4Z" fill="#60a5fa"/></svg>
+        </span>
+        <span class="brand-text"><b>Paceglass</b><small>Admin console</small></span>
+      </a>
+      <div class="appbar-actions">
+        <a class="appbar-btn" href="./">Back to app</a>
+        <button class="appbar-btn" type="button" id="sign-out" hidden>Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="admin-main" tabindex="-1">
+    <div id="admin-root" aria-live="polite">
+      <section class="card signin-card"><p class="muted">Loading…</p></section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast toast-admin" role="status" aria-live="polite" hidden></div>
+
+  <noscript><p class="noscript">The admin console needs JavaScript turned on.</p></noscript>
+  <script type="module" src="js/admin.js"></script>
+</body>
+</html>

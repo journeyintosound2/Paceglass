@@ -1,0 +1,43 @@
+/* Admin console: builds on css/styles.css (same tokens, cards, buttons and app bar). */
+
+body.admin { padding-bottom: 0; }
+.appbar-inner.wide { max-width: 1040px; }
+.appbar a.brand { color: inherit; text-decoration: none; }
+.appbar-actions { display: flex; gap: 8px; }
+a.appbar-btn { display: inline-flex; align-items: center; text-decoration: none; }
+
+.admin-main { max-width: 1040px; padding-bottom: 48px; display: flex; flex-direction: column; gap: 18px; }
+#admin-root { display: flex; flex-direction: column; gap: 18px; }
+
+.tiles-3 { grid-template-columns: repeat(3, 1fr); }
+
+.admin-grid { display: grid; gap: 18px; grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 860px) {
+  .admin-grid { grid-template-columns: 340px 1fr; }
+  .add-card { position: sticky; top: 96px; }
+}
+
+.members-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+ul.members { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.member {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "who pill" "actions actions";
+  gap: 10px 12px; align-items: start;
+  padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft);
+}
+.member .who { grid-area: who; display: flex; flex-direction: column; min-width: 0; }
+.member .who b { font-weight: 800; overflow-wrap: anywhere; }
+.member .email { font-size: .86rem; color: var(--muted); font-weight: 600; overflow-wrap: anywhere; }
+.member .meta { font-size: .78rem; color: var(--muted-light); font-weight: 600; }
+.member .actions { grid-area: actions; display: flex; flex-wrap: wrap; gap: 8px; }
+.member .actions .btn { min-height: 36px; padding: 0 14px; font-size: .8rem; }
+
+.pill { grid-area: pill; padding: 4px 12px; border-radius: 999px; font-size: .76rem; font-weight: 900; }
+.pill.on { background: var(--green-soft); color: var(--green); }
+.pill.off { background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+
+.toast-admin { bottom: calc(24px + var(--safe-b)); }
+
+@media (max-width: 480px) {
+  /* The logo already links back to the app; keep the bar uncluttered on phones. */
+  .appbar-actions a.appbar-btn { display: none; }
+}

@@ -48,10 +48,23 @@ function safeStorage(storage) {
   }
 }
 
-export function load(storage, now = new Date()) {
+/** Storage key for one signed-in person, so two people sharing a device never see each other's log. */
+export function userStorageKey(uid) {
+  return `${STORAGE_KEY}:${uid}`;
+}
+
+export function hasStoredState(storage, key = STORAGE_KEY) {
+  try {
+    return Boolean(safeStorage(storage)?.getItem(key));
+  } catch {
+    return false;
+  }
+}
+
+export function load(storage, now = new Date(), key = STORAGE_KEY) {
   const s = safeStorage(storage);
   try {
-    const raw = s?.getItem(STORAGE_KEY);
+    const raw = s?.getItem(key);
     if (!raw) return createState(now);
     return migrate(JSON.parse(raw), now);
   } catch {
@@ -59,14 +72,37 @@ export function load(storage, now = new Date()) {
   }
 }
 
-export function save(state, storage) {
+/** Save locally. `touch` stamps savedAt, which decides which copy wins when syncing with the cloud. */
+export function save(state, storage, key = STORAGE_KEY, { touch = true } = {}) {
   const s = safeStorage(storage);
+  if (touch) state.savedAt = Date.now();
   try {
-    s?.setItem(STORAGE_KEY, JSON.stringify(state));
+    s?.setItem(key, JSON.stringify(state));
     return true;
   } catch {
     return false;
   }
+}
+
+export function removeStored(storage, key) {
+  try {
+    safeStorage(storage)?.removeItem(key);
+  } catch { /* ignore */ }
+}
+
+/**
+ * Pick between the copy on this device and the copy in the cloud: the most recently saved wins.
+ * Returns 'local', 'remote' or 'same'.
+ */
+export function newerCopy(localSavedAt, remoteSavedAt) {
+  const l = Number(localSavedAt) || 0;
+  const r = Number(remoteSavedAt) || 0;
+  if (l === r) return 'same';
+  return l > r ? 'local' : 'remote';
+}
+
+export function hasAnyData(state) {
+  return Boolean(state && (Object.keys(state.days || {}).length || state.settings?.onboarded));
 }
 
 export function migrate(data, now = new Date()) {
@@ -75,6 +111,7 @@ export function migrate(data, now = new Date()) {
   }
   const state = createState(now);
   state.settings = { ...state.settings, ...(data.settings || {}) };
+  if (Number.isFinite(Number(data.savedAt))) state.savedAt = Number(data.savedAt);
   for (const [key, day] of Object.entries(data.days)) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !day) continue;
     state.days[key] = {

@@ -618,6 +618,32 @@ main:focus { outline: none; }
 .progress-dots i { width: 28px; height: 6px; border-radius: 3px; background: var(--line); }
 .progress-dots i.on { background: var(--brand); }
 
+/* ---------- sign-in (app gate and admin console) ---------- */
+
+.signin-card {
+  width: 100%; max-width: 440px; margin: 32px auto 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 14px;
+  box-shadow: var(--shadow-md);
+}
+.signin-card h1 { font-size: 1.8rem; letter-spacing: -0.035em; }
+.signin-form { width: 100%; display: grid; gap: 14px; }
+.secure-note {
+  width: 100%; padding: 10px 14px; border-radius: var(--radius-xs); font-size: .86rem;
+  background: var(--brand-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+}
+.secure-note b { color: var(--brand); }
+
+.status { font-size: .86rem; font-weight: 600; color: var(--muted); min-height: 1.3em; text-align: center; }
+.status.ok { color: var(--green); }
+.status.error { color: var(--orange); }
+#add-status { text-align: left; }
+
+.gate { max-width: 600px; margin: 0 auto; padding: 8px var(--gutter) 40px; }
+body.gated main, body.gated .tabbar, body.gated .appbar-btn { display: none; }
+.admin-link { font-size: .86rem; font-weight: 800; color: var(--brand); text-decoration: none; align-self: center; padding: 8px; }
+.admin-link:hover { text-decoration: underline; }
+.about .admin-link { align-self: flex-start; padding: 8px 0; }
+
 /* ---------- toast ---------- */
 
 .toast {

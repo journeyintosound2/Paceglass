@@ -17,9 +17,11 @@ import {
   PACES, buildPlan, isHeavy, planEnd, planPosition, recordCheckin, repeatPreviousStep, slowDown,
 } from './plan.js';
 import {
-  addEntry, clearDay, createState, dayTotal, exportJSON, importJSON, isLogged, load, markAlcoholFree,
-  removeEntry, save, setDayTotal, setNote, updateSettings,
+  STORAGE_KEY, addEntry, clearDay, createState, dayTotal, exportJSON, hasAnyData, hasStoredState, importJSON,
+  isLogged, load, markAlcoholFree, migrate, newerCopy, removeEntry, removeStored, save, setDayTotal, setNote,
+  updateSettings, userStorageKey,
 } from './store.js';
+import { cloudEnabled, friendlyError, getBackend, isValidEmail } from './cloud.js';
 import {
   currentAfStreak, hoursAlcoholFree, longestAfStreak, missingDays, monthSummary, planProgress,
   recentWeeks, savings, summariseRange, weekSummary,
@@ -27,7 +29,7 @@ import {
 
 // ---------------------------------------------------------------- state
 
-let state = load();
+let state = createState();
 const ui = {
   tab: 'today',
   calYear: new Date().getFullYear(),
@@ -46,8 +48,26 @@ const money = (n) => n.toLocaleString('en-AU', { style: 'currency', currency: 'A
 const s = (n, one, many = `${one}s`) => (n === 1 ? one : many);
 const shortDate = (key) => new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'short' }).format(fromKey(key));
 
+// Signed-in session when the cloud is set up (see js/cloud.js). In local-only mode user is null.
+const session = {
+  backend: null,
+  user: null, // { uid, email }
+  admin: false,
+  storageKey: STORAGE_KEY,
+  offline: false,
+  sync: 'idle', // 'idle' | 'saving' | 'saved' | 'error' | 'offline'
+  saveTimer: null,
+  pending: null,
+};
+
+/** Save on this device, and to the person's account when signed in. */
+function persist() {
+  if (!save(state, undefined, session.storageKey)) toast('Couldn\'t save on this device. Check storage isn\'t full or blocked.');
+  scheduleCloudSave();
+}
+
 function commit() {
-  if (!save(state)) toast('Couldn\'t save on this device. Check storage isn\'t full or blocked.');
+  persist();
   render();
 }
 
@@ -583,6 +603,17 @@ function renderSettings() {
       <h1 id="settings-title">Your goal and data</h1>
     </header>
 
+    ${session.user ? `
+    <section class="card block">
+      <h2>Your account</h2>
+      <p>Signed in as <b>${esc(session.user.email)}</b>.</p>
+      <p class="small muted" id="sync-status">${esc(syncText())}</p>
+      <div class="btn-row">
+        <button class="btn btn-sm btn-quiet" type="button" data-action="sign-out">Sign out</button>
+        ${session.admin ? '<a class="btn btn-sm btn-quiet" href="admin.html">Admin console</a>' : ''}
+      </div>
+    </section>` : ''}
+
     <section class="card block">
       <h2>Step-down plan</h2>
       ${plan ? `
@@ -665,7 +696,9 @@ function renderSettings() {
 
     <section class="card block">
       <h2>Your data</h2>
-      <p class="muted small">Everything stays on this device. Nothing is sent anywhere. Save a backup now and then, especially before changing phones or clearing your browser.</p>
+      <p class="muted small">${session.user
+        ? 'Your log is saved to your account, so it\'s backed up and you can sign in on another device. Paceglass doesn\'t show it to anyone else, including admins. You can also save a copy as a file.'
+        : 'Everything stays on this device. Nothing is sent anywhere. Save a backup now and then, especially before changing phones or clearing your browser.'}</p>
       <div class="btn-row">
         <button class="btn btn-sm btn-quiet" type="button" data-action="export">Save a backup</button>
         <label class="btn btn-sm btn-quiet" for="import-file">Restore a backup</label>
@@ -677,7 +710,8 @@ function renderSettings() {
     <section class="block about">
       <h2>About</h2>
       <p class="small muted">A standard drink in Australia is 10 grams of alcohol. The Australian guidelines recommend no more than 10 standard drinks a week and no more than 4 on any one day to reduce the risk of harm.</p>
-      <p class="fineprint">Paceglass is a prototype and offers general information, not medical advice. The pace note is not a blood alcohol estimate. Never use it to decide whether you're safe to drive. Version 0.2.0.</p>
+      <p class="fineprint">Paceglass is a prototype and offers general information, not medical advice. The pace note is not a blood alcohol estimate. Never use it to decide whether you're safe to drive. Version 0.3.0.</p>
+      <a class="admin-link" href="admin.html">Admin console</a>
     </section>
   `;
 }
@@ -1039,7 +1073,7 @@ function renderOnboarding() {
     body = `
       <div class="onboard-mark">${glassSVG({ kind: 'drink', level: 0.45 })}</div>
       <h2 id="onboard-title">Welcome to Paceglass</h2>
-      <p class="muted">Log your drinks as you go, see your month at a glance, and learn what changes when you drink less. Everything stays on this phone.</p>
+      <p class="muted">Log your drinks as you go, see your month at a glance, and learn what changes when you drink less. ${session.user ? 'Your log is private to your account.' : 'Everything stays on this phone.'}</p>
       <fieldset class="field">
         <legend class="label">What are you aiming for?</legend>
         ${goalOptions(st.goalMode, 'ob-goal')}
@@ -1130,7 +1164,7 @@ function pour() {
   const t = today();
   const p = selectedPreset();
   const entry = addEntry(state, t, { label: p.label, std: p.std, presetId: p.id });
-  save(state);
+  persist();
 
   // Animate the existing glass rather than re-rendering it, so the liquid visibly rises.
   const total = dayTotal(state.days[t]);
@@ -1292,6 +1326,9 @@ document.addEventListener('click', (ev) => {
       commit();
       toast('Plan ended. Your limits are back to the ones in Settings.');
       return;
+    case 'sign-out':
+      signOutNow();
+      return;
     case 'export':
       download(`paceglass-backup-${today()}.json`, exportJSON(state));
       toast('Backup saved');
@@ -1299,7 +1336,7 @@ document.addEventListener('click', (ev) => {
     case 'delete-all':
       if (!ui.deleteArmed) { ui.deleteArmed = true; renderSettings(); return; }
       state = createState();
-      save(state);
+      persist();
       ui.deleteArmed = false;
       ui.onboardStep = 0;
       render();
@@ -1349,10 +1386,10 @@ document.addEventListener('input', (ev) => {
   const t = ev.target;
   if (t.id === 'day-total') {
     const v = parseFloat(t.value);
-    if (Number.isFinite(v) && v >= 0) { setDayTotal(state, ui.editingDay, v); save(state); render(); }
+    if (Number.isFinite(v) && v >= 0) { setDayTotal(state, ui.editingDay, v); persist(); render(); }
     return;
   }
-  if (t.id === 'day-note') { setNote(state, ui.editingDay, t.value); save(state); return; }
+  if (t.id === 'day-note') { setNote(state, ui.editingDay, t.value); persist(); return; }
   if (t.closest('#custom-form')) {
     const f = t.closest('#custom-form');
     $('#c-std').textContent = fmt(standardDrinks(f.ml.value, f.abv.value));
@@ -1385,7 +1422,7 @@ document.addEventListener('change', (ev) => {
   const v = parseFloat(t.value);
   if (!Number.isFinite(v) || v < 0) return;
   updateSettings(state, { [name]: name === 'afDaysPerWeek' ? Math.min(7, Math.round(v)) : v });
-  save(state);
+  persist();
 });
 
 document.addEventListener('submit', (ev) => {
@@ -1454,7 +1491,7 @@ document.querySelectorAll('dialog.sheet').forEach((d) => {
     if (d.id === 'sheet-day') ui.editingDay = null;
     if (d.id === 'sheet-craving' && cravingTimer) { clearInterval(cravingTimer.id); cravingTimer = null; }
     if (d.id === 'sheet-onboarding' && !state.settings.onboarded) {
-      updateSettings(state, { onboarded: true }); save(state);
+      updateSettings(state, { onboarded: true }); persist();
     }
     render();
   });
@@ -1486,16 +1523,278 @@ setInterval(() => {
   }
 }, 30000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !document.querySelector('dialog[open]')) { state = load(); render(); }
+  if (document.hidden) { flushCloudSave(); return; }
+  if (document.querySelector('dialog[open]') || document.body.classList.contains('gated')) return;
+  if (session.user && session.backend) { pullRemote(); return; }
+  state = load(undefined, new Date(), session.storageKey);
+  render();
 });
 
-applyTheme();
-try {
-  const saved = sessionStorage.getItem('paceglass:tab');
-  if (saved) ui.tab = saved;
-} catch { /* ignore */ }
-setTab(ui.tab);
-if (!state.settings.onboarded) { renderOnboarding(); openSheet('sheet-onboarding'); }
+// ---------------------------------------------------------------- accounts and cloud saving
+
+function syncText() {
+  if (session.offline) return 'Offline. Changes are kept on this device and will sync next time you open Paceglass online.';
+  if (session.sync === 'saving') return 'Saving to your account…';
+  if (session.sync === 'error') return 'Couldn\'t save to your account just now. Your changes are safe on this device and will be retried.';
+  return 'Your log is saved to your account.';
+}
+
+function setSync(status) {
+  session.sync = status;
+  const el = document.getElementById('sync-status');
+  if (el) el.textContent = syncText();
+}
+
+function scheduleCloudSave(delay = 1200) {
+  if (!session.user || !session.backend || session.offline) return;
+  clearTimeout(session.saveTimer);
+  setSync('saving');
+  session.saveTimer = setTimeout(cloudSaveNow, delay);
+}
+
+function cloudSaveNow() {
+  clearTimeout(session.saveTimer);
+  session.saveTimer = null;
+  if (!session.user || !session.backend) return Promise.resolve();
+  const p = session.backend.saveUserData(session.user.uid, JSON.stringify(state), state.savedAt || Date.now())
+    .then(() => { if (session.pending === p) setSync('saved'); })
+    .catch(() => { setSync('error'); session.saveTimer = setTimeout(cloudSaveNow, 15000); });
+  session.pending = p;
+  return p;
+}
+
+/** Push any waiting change straight away (when leaving the app or signing out). */
+function flushCloudSave() {
+  if (session.saveTimer) return cloudSaveNow();
+  return session.pending || Promise.resolve();
+}
+
+async function pullRemote() {
+  try {
+    const r = await session.backend.loadUserData(session.user.uid);
+    if (!r) return;
+    const remote = migrate(JSON.parse(r.stateJson));
+    if (!remote.savedAt) remote.savedAt = r.clientUpdatedAt;
+    if (newerCopy(state.savedAt, remote.savedAt) === 'remote') {
+      state = remote;
+      save(state, undefined, session.storageKey, { touch: false });
+      applyTheme();
+      render();
+    }
+  } catch { /* stay with what's on this device */ }
+}
+
+const LAST_USER_KEY = 'paceglass:lastUser';
+function rememberUser(user, admin) {
+  try { localStorage.setItem(LAST_USER_KEY, JSON.stringify({ uid: user.uid, email: user.email, admin })); } catch { /* ignore */ }
+}
+function lastUser() {
+  try { return JSON.parse(localStorage.getItem(LAST_USER_KEY) || 'null'); } catch { return null; }
+}
+
+function showGate(kind, opts = {}) {
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  document.body.classList.add('gated');
+  const gate = $('#gate');
+  gate.hidden = false;
+  const adminLink = '<a class="admin-link" href="admin.html">Admin console</a>';
+  if (kind === 'loading') {
+    gate.innerHTML = `<section class="card signin-card"><span class="badge">Paceglass</span><p class="muted">${esc(opts.text || 'Loading…')}</p></section>`;
+  } else if (kind === 'signin') {
+    gate.innerHTML = `
+      <section class="card signin-card">
+        <span class="badge">Paceglass</span>
+        <h1 id="gate-title">Sign in</h1>
+        <p class="muted">Paceglass is invite-only for now. Sign in with the email your invite was sent to.</p>
+        <div class="secure-note"><b>Private.</b> Your drink log is saved to your account. Paceglass doesn't show it to anyone else.</div>
+        <form id="gate-form" class="signin-form" novalidate>
+          <div class="field">
+            <label for="g-email">Email</label>
+            <input class="input" id="g-email" name="email" type="email" autocomplete="username" inputmode="email" required value="${esc(opts.email || '')}">
+          </div>
+          <div class="field">
+            <label for="g-password">Password</label>
+            <input class="input" id="g-password" name="password" type="password" autocomplete="current-password" required>
+          </div>
+          <button class="btn btn-primary btn-block" type="submit" id="g-submit">Sign in</button>
+          <p class="status ${opts.tone || ''}" id="g-status" role="status">${esc(opts.message || 'Ready. Enter your email and password.')}</p>
+          <button class="link-btn" type="button" data-action="gate-reset">Haven't set a password yet, or forgotten it?</button>
+        </form>
+        ${adminLink}
+      </section>`;
+  } else if (kind === 'noaccess') {
+    gate.innerHTML = `
+      <section class="card signin-card">
+        <span class="badge">Paceglass</span>
+        <h1 id="gate-title">No access yet</h1>
+        <p class="muted">You're signed in as <b>${esc(opts.email)}</b>, but this account doesn't have access to Paceglass${opts.paused ? ' at the moment' : ''}. If you think it should, contact the person who invited you.</p>
+        <button class="btn btn-quiet" type="button" data-action="sign-out">Sign in with another account</button>
+        ${adminLink}
+      </section>`;
+  } else if (kind === 'offline') {
+    gate.innerHTML = `
+      <section class="card signin-card">
+        <span class="badge">Paceglass</span>
+        <h1 id="gate-title">Can't connect</h1>
+        <p class="muted">Paceglass needs to be online the first time you sign in on this device. Check your connection and try again.</p>
+        <button class="btn btn-primary" type="button" data-action="gate-retry">Try again</button>
+        ${adminLink}
+      </section>`;
+  }
+}
+
+function hideGate() {
+  document.body.classList.remove('gated');
+  $('#gate').hidden = true;
+  $('#gate').innerHTML = '';
+}
+
+async function handleAuth(user) {
+  if (!user) {
+    session.user = null;
+    showGate('signin');
+    return;
+  }
+  showGate('loading', { text: 'Checking your access…' });
+  let access;
+  try {
+    access = await session.backend.getAccess(user);
+  } catch (err) {
+    const last = lastUser();
+    if (last && last.uid === user.uid) access = { admin: last.admin, member: { status: 'active' } };
+    else { showGate('signin', { message: friendlyError(err), tone: 'error', email: user.email }); return; }
+  }
+  const allowed = access.admin || access.member?.status === 'active';
+  if (!allowed) { showGate('noaccess', { email: user.email, paused: access.member?.status === 'disabled' }); return; }
+  await enterApp(user, access.admin);
+}
+
+async function enterApp(user, admin) {
+  session.user = user;
+  session.admin = admin;
+  session.offline = false;
+  session.storageKey = userStorageKey(user.uid);
+  rememberUser(user, admin);
+
+  // This device's copy: the account's own, or a log kept here before signing in was set up.
+  let local = hasStoredState(undefined, session.storageKey) ? load(undefined, new Date(), session.storageKey) : null;
+  let fromLegacy = false;
+  if (!local && hasStoredState(undefined, STORAGE_KEY)) {
+    const legacy = load();
+    if (hasAnyData(legacy)) { local = legacy; fromLegacy = true; }
+  }
+  let remote = null;
+  try {
+    const r = await session.backend.loadUserData(user.uid);
+    if (r) {
+      remote = migrate(JSON.parse(r.stateJson));
+      if (!remote.savedAt) remote.savedAt = r.clientUpdatedAt;
+    }
+  } catch {
+    setSync('error');
+  }
+  const pick = !remote ? 'local' : !local ? 'remote' : newerCopy(local.savedAt, remote.savedAt);
+  state = pick === 'remote' ? remote : (local || createState());
+  save(state, undefined, session.storageKey, { touch: !state.savedAt });
+  if (pick !== 'remote' && hasAnyData(state)) scheduleCloudSave(0);
+  if (fromLegacy && pick !== 'remote') removeStored(undefined, STORAGE_KEY);
+  hideGate();
+  startApp();
+}
+
+/** No connection when opening the app: carry on with this device's copy for the last person signed in. */
+function enterOffline(last) {
+  session.user = { uid: last.uid, email: last.email };
+  session.admin = Boolean(last.admin);
+  session.offline = true;
+  session.storageKey = userStorageKey(last.uid);
+  state = load(undefined, new Date(), session.storageKey);
+  hideGate();
+  startApp();
+}
+
+async function signOutNow() {
+  try { await Promise.race([flushCloudSave(), new Promise((r) => setTimeout(r, 4000))]); } catch { /* ignore */ }
+  const key = session.storageKey;
+  try { localStorage.removeItem(LAST_USER_KEY); } catch { /* ignore */ }
+  if (key !== STORAGE_KEY) removeStored(undefined, key);
+  state = createState();
+  session.user = null;
+  session.admin = false;
+  session.storageKey = STORAGE_KEY;
+  if (session.backend) await session.backend.signOut(); // onAuth shows the sign-in screen
+  else showGate('signin');
+}
+
+// Sign-in screen form and links.
+document.addEventListener('submit', async (ev) => {
+  if (ev.target.id !== 'gate-form') return;
+  ev.preventDefault();
+  const f = ev.target;
+  const status = $('#g-status');
+  if (!isValidEmail(f.email.value) || !f.password.value) {
+    status.textContent = 'Enter your email and password.';
+    status.className = 'status error';
+    return;
+  }
+  $('#g-submit').disabled = true;
+  status.textContent = 'Signing in…';
+  status.className = 'status';
+  try {
+    await session.backend.signIn(f.email.value, f.password.value);
+  } catch (err) {
+    status.textContent = friendlyError(err);
+    status.className = 'status error';
+    $('#g-submit').disabled = false;
+  }
+}, true);
+
+document.addEventListener('click', async (ev) => {
+  const el = ev.target.closest('[data-action="gate-reset"], [data-action="gate-retry"]');
+  if (!el) return;
+  if (el.dataset.action === 'gate-retry') { location.reload(); return; }
+  const email = $('#g-email')?.value;
+  const status = $('#g-status');
+  if (!isValidEmail(email)) {
+    status.textContent = 'Type your email above first, then tap the link again.';
+    status.className = 'status error';
+    return;
+  }
+  try { await session.backend.sendSetPasswordEmail(email); } catch { /* same message either way */ }
+  status.textContent = 'If that email has an account, a link to set your password is on its way. Check your inbox and junk folder.';
+  status.className = 'status ok';
+});
+
+function startApp() {
+  applyTheme();
+  setTab(ui.tab);
+  if (!state.settings.onboarded) { ui.onboardStep = 0; renderOnboarding(); openSheet('sheet-onboarding'); }
+}
+
+async function boot() {
+  try {
+    const saved = sessionStorage.getItem('paceglass:tab');
+    if (saved) ui.tab = saved;
+  } catch { /* ignore */ }
+
+  if (!cloudEnabled()) {
+    state = load();
+    startApp();
+    return;
+  }
+  showGate('loading');
+  try {
+    session.backend = await getBackend();
+  } catch {
+    const last = lastUser();
+    if (last) enterOffline(last);
+    else showGate('offline');
+    return;
+  }
+  session.backend.onAuth((user) => { handleAuth(user); });
+}
+
+boot();
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
