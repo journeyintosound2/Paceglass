@@ -28,6 +28,7 @@ export function defaultSettings(now = new Date()) {
     startDate: todayKey(now),
     weekStartsOn: 1,
     reasons: '', // the user's own "why", shown back to them during cravings
+    plan: null, // step-down plan, see js/plan.js
     onboarded: false,
   };
 }

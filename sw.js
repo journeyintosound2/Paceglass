@@ -2,7 +2,7 @@
 // Network first for the app's own files (so updates show up straight away when online),
 // falling back to the cache when offline. Fonts are cached after first use.
 
-const CACHE = 'paceglass-v1';
+const CACHE = 'paceglass-v2';
 const SHELL = [
   './',
   'index.html',
@@ -12,6 +12,8 @@ const SHELL = [
   'js/drinks.js',
   'js/glass.js',
   'js/insights.js',
+  'js/limits.js',
+  'js/plan.js',
   'js/stats.js',
   'js/store.js',
   'manifest.webmanifest',

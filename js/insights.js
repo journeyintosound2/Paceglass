@@ -5,9 +5,11 @@
 // referenced in docs/CONTENT-SOURCES.md. Keep the tone plain, warm and non-judgemental:
 // "you might notice", never "you will", and never shame a slip.
 
-import { toKey } from './dates.js';
+import { addDays, toKey } from './dates.js';
+import { limitsOn } from './limits.js';
+import { AF_DAYS_FROM_WEEKLY, HEAVY_PER_WEEK } from './plan.js';
 import { dayTotal } from './store.js';
-import { currentAfStreak, heaviestRecentDay, hoursAlcoholFree, weekSummary } from './stats.js';
+import { currentAfStreak, heaviestRecentDay, hoursAlcoholFree, summariseRange, weekSummary } from './stats.js';
 
 export const PHASES = [
   {
@@ -151,43 +153,56 @@ const plural = (n, word) => `${fmtNum(n)} ${word}${n === 1 ? '' : 's'}`;
  * Returns { tone: 'calm' | 'nudge' | 'limit', text }.
  */
 export function todayMessage(state, todayKey_, now = new Date()) {
-  const { dailyLimit, weeklyLimit, goalMode } = state.settings;
+  const { goalMode } = state.settings;
+  const lim = limitsOn(state, todayKey_);
   const day = state.days[todayKey_];
   const total = dayTotal(day);
-  const week = weekSummary(state, todayKey_, todayKey_);
+  const week = lim.fromPlan
+    ? { total: summariseRange(state, lim.pos.step.start, addDays(lim.pos.step.start, 6), todayKey_).total }
+    : weekSummary(state, todayKey_, todayKey_);
+  const weekWord = lim.fromPlan ? 'this plan week' : 'this week';
 
   if (total === 0) {
     const streak = currentAfStreak(state, todayKey_);
     if (day) return { tone: 'calm', text: streak > 1 ? `Alcohol-free today. That's ${streak} days in a row.` : 'Alcohol-free today.' };
     if (goalMode === 'cutback') {
-      return { tone: 'calm', text: `${plural(week.total, 'drink')} so far this week, against your limit of ${weeklyLimit}.` };
+      if (lim.fromPlan && lim.daily > 0) {
+        return { tone: 'calm', text: `Today's limit is ${lim.daily}. ${plural(week.total, 'drink')} so far ${weekWord}, out of ${lim.weekly}.` };
+      }
+      return { tone: 'calm', text: `${plural(week.total, 'drink')} so far ${weekWord}, against your limit of ${lim.weekly}.` };
     }
     return { tone: 'calm', text: streak > 0 ? `${plural(streak, 'day')} alcohol-free so far. Tap the glass if you have a drink, or mark today alcohol-free tonight.` : 'Tap the glass when you have a drink, or mark today alcohol-free tonight.' };
   }
 
-  if (goalMode !== 'cutback') {
+  if (goalMode !== 'cutback' || lim.daily === 0) {
     return {
       tone: 'nudge',
       text: 'Slips are part of most people\'s path. Logging it honestly is the important part. Your streak restarts, but what you have built doesn\'t disappear.',
     };
   }
 
-  if (total > dailyLimit) {
+  const tapering = lim.fromPlan && lim.weekly > AF_DAYS_FROM_WEEKLY;
+  if (total > lim.daily) {
     return {
       tone: 'limit',
-      text: `You're past your daily limit of ${dailyLimit}. If you'd like to stop here, switching to water or something alcohol-free now makes it easier.`,
+      text: `You're past today's limit of ${lim.daily}. If you'd like to stop here, switching to water or something alcohol-free now makes it easier.`,
     };
   }
-  if (total >= dailyLimit) {
-    return { tone: 'limit', text: `That's your daily limit of ${dailyLimit}. Tomorrow starts fresh.` };
+  if (total >= lim.daily) {
+    return { tone: 'limit', text: `That's today's limit of ${lim.daily}. Tomorrow starts fresh.` };
   }
-  if (week.total > weeklyLimit) {
-    return { tone: 'nudge', text: `That puts you at ${fmtNum(week.total)} for the week, over your limit of ${weeklyLimit}. An alcohol-free day or two will help even it out.` };
+  if (week.total > lim.weekly) {
+    return {
+      tone: 'nudge',
+      text: tapering
+        ? `That puts you at ${fmtNum(week.total)} for ${weekWord}, over the ${lim.weekly} planned. Keep the coming days steady rather than stopping suddenly. That's safer while your body adjusts.`
+        : `That puts you at ${fmtNum(week.total)} for ${weekWord}, over your limit of ${lim.weekly}. An alcohol-free day or two will help even it out.`,
+    };
   }
-  const left = Math.round((dailyLimit - total) * 10) / 10;
+  const left = Math.round((lim.daily - total) * 10) / 10;
   return {
     tone: 'calm',
-    text: `${plural(total, 'standard drink')} today, ${fmtNum(left)} under your daily limit. Your body clears about one an hour, so spacing them out with water helps.`,
+    text: `${plural(total, 'standard drink')} today, ${fmtNum(left)} under today's limit. Your body clears about one an hour, so spacing them out with water helps.`,
   };
 }
 
@@ -229,3 +244,125 @@ export const SUPPORT = [
   { name: 'Counselling Online', detail: 'Free text-based alcohol and drug counselling, 24/7.', url: 'https://www.counsellingonline.org.au' },
   { name: 'Emergency', detail: 'If someone is in danger, has a seizure or is very unwell.', phone: '000' },
 ];
+
+// ---------------------------------------------------------------- step-down plans
+
+/** Signs that need an ambulance (000), from NHS guidance on cutting down at home. */
+export const URGENT_WITHDRAWAL_SIGNS = [
+  'A seizure (fit)',
+  'Confusion',
+  'Seeing or hearing things that aren\'t there',
+  'Double vision',
+  'Being very unsteady on your feet',
+];
+
+/** Common, milder signs that the plan is going a bit fast. */
+export const MILD_WITHDRAWAL_SIGNS = [
+  'Shaky hands, especially in the morning',
+  'Sweating',
+  'Feeling sick, or a headache',
+  'Anxiety, restlessness or irritability',
+  'Trouble getting to sleep',
+];
+
+/**
+ * What to expect at each stage of cutting back. Chosen by where the current step sits:
+ * average per day, how far down from the starting point, and whether it's the final step.
+ */
+export const PLAN_STAGES = [
+  {
+    id: 'start',
+    title: 'Starting to cut back',
+    when: 'First step',
+    gains: [
+      'Each step down means less alcohol for your liver, heart and brain to deal with every day.',
+      'You are likely to notice lighter hangovers and slightly clearer mornings early on.',
+      'Spending drops straight away. Check Insights to see what you are not spending.',
+    ],
+    hard: [
+      'When you drink less than your body is used to, you might feel shaky, sweaty, anxious or restless, or sleep badly. Mild symptoms are common and settle as your body adjusts.',
+      'If symptoms are more than mild, the plan is moving too fast for you. Use "I\'m getting symptoms" to slow it down.',
+      'Spread your drinks evenly across the day and the week. Saving them up for one big session undoes the point of tapering.',
+    ],
+  },
+  {
+    id: 'early',
+    title: 'Coming down',
+    when: 'Still above 4 a day on average',
+    gains: [
+      'Blood pressure tends to come down as heavy drinking comes down.',
+      'Sleep often starts to improve on lower nights, even before you reach your target.',
+      'Many people find their mood is steadier and their patience longer.',
+    ],
+    hard: [
+      'The times you would usually drink more, like after work or late evening, are often the hardest. Have something else ready for those moments.',
+      'Counting and planning can feel like a chore. It gets more automatic after a few weeks.',
+      'Keep each day close to the plan rather than having alcohol-free days yet. Sudden stops are what bring on stronger withdrawal.',
+    ],
+  },
+  {
+    id: 'af-days',
+    title: 'Adding alcohol-free days',
+    when: 'Around 4 a day or less',
+    gains: [
+      'Alcohol-free days give your liver a regular break and help stop tolerance creeping back up.',
+      'Sleep on alcohol-free nights is usually deeper and more refreshing, once you are used to it.',
+    ],
+    hard: [
+      'The first few alcohol-free days in a long while can bring cravings, restlessness or a poor night\'s sleep. That usually eases with each one.',
+      'Plan those evenings: a walk, a call, a film, a different drink in a nice glass.',
+    ],
+  },
+  {
+    id: 'halfway',
+    title: 'Halfway and beyond',
+    when: 'Drinking half or less of what you started at',
+    gains: [
+      'The risk of alcohol-related injury, liver disease, heart disease and several cancers falls as drinking falls.',
+      'Weight, skin and energy often improve noticeably by now.',
+      'You have proved you can change this. That counts for a lot.',
+    ],
+    hard: [
+      'Plateaus are normal. A week where you repeat a step is still progress.',
+      'The "I\'ve done enough now" thought is common around here. Remind yourself of your reasons.',
+    ],
+  },
+  {
+    id: 'target',
+    title: 'At your target',
+    when: 'Final step',
+    gains: [
+      'At 10 or fewer a week, and no more than 4 on any day, your lifetime risk of harm from alcohol is low.',
+      'From here your calendar becomes a way to keep things steady, not a countdown.',
+    ],
+    hard: [
+      'Holidays, celebrations and stressful weeks can pull things back up. Decide your number before you start.',
+      'If you slip back up for a while, you can build a new plan from wherever you are.',
+    ],
+  },
+];
+
+export function planStageFor(plan, index) {
+  if (!plan) return null;
+  const step = plan.steps[index];
+  const isLast = index === plan.steps.length - 1;
+  if (isLast) return PLAN_STAGES.find((s) => s.id === 'target');
+  if (index === 0) return PLAN_STAGES[0];
+  if (step.weekly <= plan.currentPerWeek / 2) return PLAN_STAGES.find((s) => s.id === 'halfway');
+  if (step.weekly <= AF_DAYS_FROM_WEEKLY) return PLAN_STAGES.find((s) => s.id === 'af-days');
+  return PLAN_STAGES.find((s) => s.id === 'early');
+}
+
+/** Show a "build a step-down plan" suggestion: cutting back from well above the limit, no plan yet. */
+export function shouldSuggestPlan(state) {
+  const { goalMode, plan, baselinePerWeek, weeklyLimit } = state.settings;
+  const base = Number(baselinePerWeek) || 0;
+  if (plan) return false;
+  if (goalMode === 'cutback') return base >= 21 && base >= 2 * (Number(weeklyLimit) || 0);
+  return base >= HEAVY_PER_WEEK; // stopping from heavy drinking: a gradual plan is safer
+}
+
+export const PLAN_SAFETY_TEXT =
+  'Cutting down gradually is safer than stopping suddenly, but if you have been drinking heavily every day you can still get withdrawal symptoms. ' +
+  'Talk to your GP before you start. They can check your plan, and some people need medication to cut down safely. ' +
+  'If you have ever had a seizure or hallucinations when stopping or cutting down, don\'t do this on your own. Get medical help first.';

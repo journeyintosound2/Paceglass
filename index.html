@@ -5,21 +5,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Paceglass</title>
   <meta name="description" content="A private drink tracker to help you cut back or take a break from alcohol.">
-  <meta name="theme-color" content="#F2F5F4" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#121D25" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0A1B45">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Paceglass">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Young+Serif&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
+
+  <header class="appbar">
+    <div class="appbar-inner">
+      <span class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M7 6h18l-2.2 19.2A2.5 2.5 0 0 1 20.3 27.5h-8.6a2.5 2.5 0 0 1-2.5-2.3L7 6Z" fill="none" stroke="#1d4ed8" stroke-width="2.4" stroke-linejoin="round"/><path d="M8.4 16h15.2l-1 9.1a1.6 1.6 0 0 1-1.6 1.4h-10a1.6 1.6 0 0 1-1.6-1.4Z" fill="#60a5fa"/></svg>
+        </span>
+        <span class="brand-text"><b>Paceglass</b><small>Drink less, at your pace</small></span>
+      </span>
+      <button class="appbar-btn" type="button" data-action="open-craving">Craving?</button>
+    </div>
+  </header>
 
   <main id="main" tabindex="-1">
     <section id="view-today" class="view" aria-labelledby="today-title"></section>
@@ -38,7 +49,7 @@
       <span>Calendar</span>
     </button>
     <button type="button" data-tab="insights">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21c4.4-2.6 7-6.3 7-10.2A7 7 0 0 0 12 4a7 7 0 0 0-7 6.8C5 14.7 7.6 18.4 12 21Z"/><path d="M12 8.5v6M9 11.5h6"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
       <span>Insights</span>
     </button>
     <button type="button" data-tab="settings">
@@ -51,6 +62,8 @@
   <dialog id="sheet-day" class="sheet" aria-labelledby="day-title"></dialog>
   <dialog id="sheet-custom" class="sheet" aria-labelledby="custom-title"></dialog>
   <dialog id="sheet-craving" class="sheet" aria-labelledby="craving-title"></dialog>
+  <dialog id="sheet-plan" class="sheet sheet-tall" aria-labelledby="plan-title"></dialog>
+  <dialog id="sheet-symptoms" class="sheet" aria-labelledby="symptoms-title"></dialog>
   <dialog id="sheet-onboarding" class="sheet sheet-full" aria-labelledby="onboard-title"></dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

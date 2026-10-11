@@ -111,7 +111,7 @@ test('today message reflects limits', () => {
   addEntry(s, TODAY, { label: 'x', std: 2 }, NOW);
   assert.equal(todayMessage(s, TODAY, NOW).tone, 'limit');
   addEntry(s, TODAY, { label: 'x', std: 1 }, NOW);
-  assert.match(todayMessage(s, TODAY, NOW).text, /past your daily limit/);
+  assert.match(todayMessage(s, TODAY, NOW).text, /past today.s limit/);
 });
 
 test('withdrawal caution shows for heavy baseline when stopping, not when cutting back', () => {

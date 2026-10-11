@@ -4,9 +4,10 @@
 import { addDays, daysBetween, fromKey, startOfWeek, toKey } from './dates.js';
 import { KJ_PER_STANDARD_DRINK, roundStd } from './drinks.js';
 import { dayTotal, isAlcoholFree, isLogged } from './store.js';
+import { glassLimitOn } from './limits.js';
+import { planPosition } from './plan.js';
 
 export function summariseRange(state, fromKey_, toKey_, todayKey_) {
-  const { dailyLimit } = state.settings;
   let total = 0, afDays = 0, loggedDays = 0, overDays = 0;
   for (let k = fromKey_; daysBetween(k, toKey_) >= 0; k = addDays(k, 1)) {
     if (todayKey_ && daysBetween(k, todayKey_) < 0) break; // ignore future days
@@ -16,7 +17,7 @@ export function summariseRange(state, fromKey_, toKey_, todayKey_) {
     const t = dayTotal(day);
     total += t;
     if (t === 0) afDays++;
-    if (t > dailyLimit) overDays++;
+    if (t > glassLimitOn(state, k)) overDays++;
   }
   return { total: roundStd(total), afDays, loggedDays, overDays };
 }
@@ -146,4 +147,22 @@ export function heaviestRecentDay(state, todayKey_, n = 14) {
   let max = 0;
   for (let i = 0; i < n; i++) max = Math.max(max, dayTotal(state.days[addDays(todayKey_, -i)]));
   return max;
+}
+
+/**
+ * Progress through a step-down plan: what was planned and what happened, step by step.
+ * status is 'done' | 'current' | 'upcoming'.
+ */
+export function planProgress(state, todayKey_) {
+  const plan = state.settings.plan;
+  if (!plan) return null;
+  const pos = planPosition(plan, todayKey_);
+  const steps = plan.steps.map((step, i) => {
+    const end = addDays(step.start, 6);
+    const status = daysBetween(end, todayKey_) > 0 ? 'done' : daysBetween(step.start, todayKey_) >= 0 ? 'current' : 'upcoming';
+    const actual = status === 'upcoming' ? null : summariseRange(state, step.start, end, todayKey_);
+    const met = actual && actual.loggedDays > 0 ? actual.total <= step.weekly : null;
+    return { index: i, ...step, end, status, actual, met };
+  });
+  return { plan, pos, steps };
 }
