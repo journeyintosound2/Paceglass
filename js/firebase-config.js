@@ -10,12 +10,12 @@
 // While apiKey is empty, Paceglass runs in local-only mode: no sign-in, data stays on the device.
 
 export const firebaseConfig = {
-  apiKey: '',
-  authDomain: '',
-  projectId: '',
-  storageBucket: '',
-  messagingSenderId: '',
-  appId: '',
+  apiKey: 'AIzaSyCcxSFBCsLBdC0AIOCbEJbojcgTpcZYEoU',
+  authDomain: 'paceglass-b1111.firebaseapp.com',
+  projectId: 'paceglass-b1111',
+  storageBucket: 'paceglass-b1111.firebasestorage.app',
+  messagingSenderId: '571930623780',
+  appId: '1:571930623780:web:59b8d6cc329682343ffdb1',
 };
 
 export const isCloudConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
