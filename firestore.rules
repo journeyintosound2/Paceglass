@@ -1,18 +1,20 @@
 rules_version = '2';
 
-// Paceglass security rules. Paste these into Firebase console → Firestore Database → Rules.
+// Paceglass security rules. Paste these into Firebase console → Firestore Database → Rules → Publish.
 //
-// Who can do what:
-// - admins/{uid}     Created by hand in the console. Each admin can read only their own entry.
-// - members/{email}  People allowed to use Paceglass. Admins manage them. A person can read their own entry.
-// - userData/{uid}   A person's drink log. Only that person can read or write it, and only while they
-//                    are an active member (or an admin). Admins cannot read anyone else's log.
+// - admins/{uid}           Created by hand in the console. Each admin can read only their own entry.
+// - members/{memberId}     People who can use Paceglass, with their code. Admins only.
+// - accounts/{authEmail}   Links a code's hidden sign-in account to a person. Admins write; the
+//                          signed-in code can read its own link.
+// - userData/{memberId}    A person's drink log. Only that person (signed in with their current code,
+//                          and active) can read or write it. Admins can delete it when removing someone,
+//                          but can't read it.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email != null;
     }
 
     function myEmail() {
@@ -20,40 +22,51 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      return request.auth != null && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    function isActiveMember() {
+    function linkedTo(memberId) {
       return signedIn()
-        && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/members/$(myEmail()))
-        && get(/databases/$(database)/documents/members/$(myEmail())).data.status == 'active';
+        && exists(/databases/$(database)/documents/accounts/$(myEmail()))
+        && get(/databases/$(database)/documents/accounts/$(myEmail())).data.memberId == memberId;
+    }
+
+    function isActive(memberId) {
+      return get(/databases/$(database)/documents/members/$(memberId)).data.status == 'active';
     }
 
     function validMember() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['email', 'name', 'note', 'status', 'createdAt', 'updatedAt', 'createdBy'])
+      return d.keys().hasOnly(['name', 'note', 'code', 'authEmail', 'status', 'createdAt', 'updatedAt', 'createdBy'])
         && d.status in ['active', 'disabled']
-        && d.email is string
+        && d.code is string && d.code.size() == 8
+        && d.authEmail is string
         && (!('name' in d) || (d.name is string && d.name.size() <= 80))
         && (!('note' in d) || (d.note is string && d.note.size() <= 200));
     }
 
     match /admins/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
 
-    match /members/{email} {
-      allow read: if isAdmin() || (signedIn() && request.auth.token.email != null && myEmail() == email);
-      allow create, update: if isAdmin() && validMember() && request.resource.data.email == email;
+    match /members/{memberId} {
+      allow read: if isAdmin() || linkedTo(memberId);
+      allow create, update: if isAdmin() && validMember();
       allow delete: if isAdmin();
     }
 
-    match /userData/{uid} {
-      allow read, write: if signedIn()
-        && request.auth.uid == uid
-        && (isActiveMember() || isAdmin());
+    match /accounts/{authEmail} {
+      allow read: if isAdmin() || (signedIn() && myEmail() == authEmail);
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['memberId'])
+        && request.resource.data.memberId is string;
+      allow delete: if isAdmin();
+    }
+
+    match /userData/{memberId} {
+      allow read, write: if linkedTo(memberId) && isActive(memberId);
+      allow delete: if isAdmin();
     }
 
     // Everything else is closed.

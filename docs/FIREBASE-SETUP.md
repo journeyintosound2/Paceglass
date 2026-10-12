@@ -1,90 +1,82 @@
 # Setting up Firebase for Paceglass
 
 Firebase handles two things for Paceglass:
-- **Signing in.** Firebase Authentication checks email and password. Paceglass never sees or stores passwords.
+- **Signing in.** People sign in to the app with a personal code. Admins sign in to the admin console with email and password. Firebase Authentication checks both.
 - **Saving.** Cloud Firestore keeps each person's drink log, so it's backed up and works across devices.
 
-Until `js/firebase-config.js` is filled in, the app keeps working in local-only mode: no sign-in, and data stays on the device.
+Anyone can also choose **Continue without signing in**. They then use Paceglass on that device only, with nothing sent to Firebase.
 
-This takes about 15 minutes. You'll need a Google account.
+Until `js/firebase-config.js` is filled in, the app runs in local-only mode for everyone.
 
 ## 1. Create the project
 
 1. Go to https://console.firebase.google.com and click **Create a project**.
-2. Name it `paceglass` (or similar). Google Analytics isn't needed, so you can turn it off.
+2. Name it `paceglass` and turn Google Analytics off.
 
 ## 2. Register the web app and copy its settings
 
-1. On the project overview page, click the **Web** icon (`</>`).
-2. Give it the nickname `Paceglass`. Leave Firebase Hosting unticked, because the app is hosted on GitHub Pages.
-3. Firebase shows a `firebaseConfig` block. Copy each value into `js/firebase-config.js`: `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`.
+1. On the project overview page, click **+ Add app**, then the **Web** icon (`</>`).
+2. Give it the nickname `Paceglass`, leave Firebase Hosting unticked, and click **Register app**.
+3. Copy the values from the `firebaseConfig` block into `js/firebase-config.js`.
 
-These values identify the project and are designed to be public. Firebase Authentication and the security rules are what protect the data.
+These values identify the project and are designed to be public. Firebase Authentication and the security rules protect the data.
 
-## 3. Turn on email and password sign-in
+## 3. Turn on sign-in
 
-1. Go to **Build → Authentication → Get started**.
-2. Under **Sign-in method**, choose **Email/Password**, turn on the first switch (not "Email link") and click **Save**.
-3. Go to **Settings → Authorised domains → Add domain** and add `journeyintosound2.github.io`. `localhost` is already there for testing on your computer.
+Personal codes use Firebase's email and password sign-in behind the scenes, so this one switch covers both codes and admins.
 
-## 4. Create the database
+1. Go to **Security → Authentication → Get started → Sign-in method**.
+2. Choose **Email/Password**, turn on the first switch (not "Email link") and click **Save**.
+3. Under **Settings → Authorised domains**, add `journeyintosound2.github.io`.
+4. Under **Settings → User actions**, make sure **Email enumeration protection** is on. It usually is by default, and it makes guessing codes harder.
 
-1. Go to **Build → Firestore Database → Create database**.
-2. Choose the location **australia-southeast1 (Sydney)**. This can't be changed later.
-3. Start in **production mode**.
-4. Open the **Rules** tab. Replace everything with the contents of `firestore.rules` from this repo, then click **Publish**.
+## 4. Create the database and publish the rules
 
-## 5. Create your admin account
+1. Go to **Databases & Storage → Firestore Database → Create database**, choose **australia-southeast1 (Sydney)**, and start in **production mode**.
+2. Open the **Rules** tab, replace everything with the contents of `firestore.rules` from this repo, and click **Publish**.
 
-Do this in the Firebase console. Your password is typed only there, never into the code.
+**Whenever `firestore.rules` changes in the repo, paste and publish it again.** The app and the rules need to match.
 
-1. Go to **Authentication → Users → Add user**.
-2. Enter your email and choose a password, then click **Add user**.
-3. Copy the **User UID** shown next to your email (a long string of letters and numbers).
-4. Go to **Firestore Database → Data → Start collection**:
+## 5. Make yourself an admin
+
+1. Go to **Authentication → Users → Add user**, enter your email and a password, and click **Add user**. That's the only place your password goes.
+2. Copy your **User UID** using the copy icon.
+3. Go to **Firestore Database → Data → Start collection**:
    - Collection ID: `admins`
-   - Document ID: paste your User UID
-   - Add one field: `email` (string), set to your email
+   - Document ID: your User UID
+   - Field: `email`, type string, value: your email
    - Click **Save**
 
-That one document is what makes you an admin. To add another admin later, repeat steps 1 to 4 for their account.
+## 6. Add people
 
-## 6. Make the invite email read well (optional, recommended)
+1. Open the **Admin console**. It's linked at the bottom of the app's Settings and on the sign-in screen, or go to `…/Paceglass/admin.html`.
+2. Sign in with your admin email and password.
+3. Enter a name (and a note if you like) and click **Create their code**.
+4. Give them the code, for example `K7QM-3XRP`, however suits you: in person, by text or by email. **Copy code** puts it on your clipboard.
+5. They open Paceglass, tap **Sign in**, enter the code and start working on their goals.
 
-When you add someone in the admin console, Firebase sends them its **password reset** email so they can set their own password. By default that email says "Reset your password", which is confusing for a new person.
+Other tools in the admin console:
 
-1. Go to **Authentication → Templates → Password reset** and click the pencil icon.
-2. Set **Sender name** to `Paceglass`.
-3. Change the subject to `Set your Paceglass password`.
-4. Edit the message, for example:
+- **New code:** replaces someone's code, for example if it was shared. The old code stops working straight away, and their log stays with them.
+- **Pause access:** they can't open their log until you restore access. Nothing is deleted.
+- **Remove:** their code stops working and their log is deleted.
 
-   > Hi, you've been invited to use Paceglass. Follow this link to set your password: %LINK%
-   > Then open https://journeyintosound2.github.io/Paceglass/ and sign in with this email.
-
-## 7. Publish and try it
-
-1. Commit and push in GitHub Desktop.
-2. Open `https://journeyintosound2.github.io/Paceglass/admin.html` (or tap **Admin console** at the bottom of the app's sign-in screen or Settings).
-3. Sign in with the account from step 5.
-4. Add a test person using another email address you own. Check that the invite arrives, and look in the junk folder too.
-5. Set that password from the email, then sign in to the app with it.
-
-As an admin, you can also sign in to the app itself. You don't need to add yourself as a person.
+Each code has a hidden sign-in account in **Authentication → Users**, listed as `u-xxxxxxxx@…firebaseapp.com`. Replaced and removed codes leave their hidden account behind, but it can't open anything. You can delete those accounts there if you want a tidy list.
 
 ## How access works
 
 | Data | Who can read it | Who can change it |
 |---|---|---|
 | `admins/{uid}` | That admin only | Nobody from the app; set up in the console |
-| `members/{email}` (name, note, active or paused) | Admins, and the person themselves | Admins |
-| `userData/{uid}` (the drink log) | That person only, while active | That person only |
+| `members/{id}`: name, note, code, active or paused | Admins, and the person signed in with that code | Admins |
+| `accounts/{hidden email}`: links a code to a person | Admins, and that code | Admins |
+| `userData/{id}`: the drink log | Only the person, while active | The person; admins can only delete it |
 
-- **Pause access:** the person can't sign in to the app or save, and their log is kept.
-- **Remove:** the person loses access straight away. Their sign-in account stays in **Authentication → Users** until you delete it there. Deleting it can't be done from the admin console, because that needs server code.
-- **Admins can't read anyone's drink log through Paceglass.** That's deliberate, given what the app tracks. As the project owner, you can still see stored data in the Firebase console. Keep the project's access to yourself, and see the roadmap's end-to-end encryption item if you want to close that gap.
+The admin console never shows anyone's drink log. As the Firebase project owner, you can still see stored data in the Firebase console, so keep access to the project to yourself.
 
 ## Troubleshooting
 
-- **"This account doesn't have permission to do that" in the admin console.** Check that the `admins` document ID exactly matches your User UID, and that the rules were published.
-- **The invite email never arrives.** Check junk, then use **Resend invite**. Firebase's free tier sends a limited number of emails per day.
-- **Sign-in fails on the live site but works locally.** Add the GitHub Pages domain under Authorised domains (step 3).
+- **"Not an admin account".** The `admins` document ID must exactly match your User UID. Copy it with the copy icon rather than typing it.
+- **"This account doesn't have permission" when creating codes.** Republish `firestore.rules` from the repo.
+- **"That code doesn't match".** Check for confusable characters. Codes never use 0, O, 1, I or L, and the app accepts lower case and spaces.
+- **Sign-in works locally but not on the live site.** Add the GitHub Pages domain under Authorised domains (step 3).

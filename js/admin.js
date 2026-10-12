@@ -1,8 +1,10 @@
-// Admin console: sign in as an admin, then add, pause or remove the people who can use Paceglass.
+// Admin console: sign in as an admin, then create people with personal codes, issue new codes,
+// pause access or remove people.
 // Admin rights come from an admins/{uid} entry in Firestore (set up by hand, see docs/FIREBASE-SETUP.md),
 // never from anything in this code.
 
-import { cloudEnabled, friendlyError, getBackend, isValidEmail, normaliseEmail } from './cloud.js';
+import { cloudEnabled, friendlyError, getBackend, isValidEmail } from './cloud.js';
+import { formatCode } from './codes.js';
 
 const root = document.getElementById('admin-root');
 const signOutBtn = document.getElementById('sign-out');
@@ -14,7 +16,9 @@ const ui = {
   user: null,
   members: [],
   filter: '',
-  confirmRemove: null,
+  confirm: null, // { id, action } for two-tap actions
+  editing: null, // member id being edited
+  justAdded: null, // { id, name, code }
   loadError: '',
 };
 
@@ -73,15 +77,15 @@ function renderDashboard() {
   signOutBtn.hidden = false;
   const all = ui.members;
   const active = all.filter((m) => m.status === 'active').length;
-  const paused = all.filter((m) => m.status !== 'active').length;
+  const paused = all.length - active;
   const q = ui.filter.trim().toLowerCase();
-  const shown = q ? all.filter((m) => `${m.name || ''} ${m.email} ${m.note || ''}`.toLowerCase().includes(q)) : all;
+  const shown = q ? all.filter((m) => `${m.name || ''} ${m.note || ''} ${m.code || ''}`.toLowerCase().includes(q)) : all;
 
   root.innerHTML = `
     <header class="page-head">
       <span class="badge">Admin console</span>
-      <h1>People who can use Paceglass</h1>
-      <p class="lede">Add someone and they'll get an email to set their own password. Signed in as ${esc(ui.user.email)}.</p>
+      <h1>People using Paceglass</h1>
+      <p class="lede">Create someone and they get their own code to sign in with. Give them the code in person or however suits you. Signed in as ${esc(ui.user.email)}.</p>
     </header>
 
     <div class="tiles tiles-3">
@@ -93,21 +97,18 @@ function renderDashboard() {
     <div class="admin-grid">
       <section class="card block add-card">
         <h2>Add someone</h2>
+        ${ui.justAdded ? justAddedPanel(ui.justAdded) : ''}
         <form id="add-form" class="settings-group" novalidate>
           <div class="field">
             <label for="add-name">Name</label>
-            <input class="input" id="add-name" name="name" maxlength="80" autocomplete="off" placeholder="Sam Taylor">
-          </div>
-          <div class="field">
-            <label for="add-email">Email</label>
-            <input class="input" id="add-email" name="email" type="email" inputmode="email" autocomplete="off" required placeholder="sam@example.com">
+            <input class="input" id="add-name" name="name" maxlength="80" autocomplete="off" required placeholder="Sam Taylor">
           </div>
           <div class="field">
             <label for="add-note">Note (optional)</label>
             <input class="input" id="add-note" name="note" maxlength="200" autocomplete="off" placeholder="Pilot group, October">
             <span class="hint">Only admins see this. Keep health details out of it.</span>
           </div>
-          <button class="btn btn-primary btn-block" type="submit" id="add-submit">Add and send invite</button>
+          <button class="btn btn-primary btn-block" type="submit" id="add-submit">Create their code</button>
           <p class="status" id="add-status" role="status"></p>
         </form>
       </section>
@@ -117,36 +118,60 @@ function renderDashboard() {
           <h2>Everyone</h2>
           <button class="link-btn" type="button" data-action="refresh">Refresh</button>
         </div>
-        ${all.length > 4 ? `<input class="input" id="member-filter" type="search" placeholder="Search by name, email or note" value="${esc(ui.filter)}" aria-label="Search people">` : ''}
+        ${all.length > 4 ? `<input class="input" id="member-filter" type="search" placeholder="Search by name, note or code" value="${esc(ui.filter)}" aria-label="Search people">` : ''}
         ${ui.loadError ? `<p class="status error">${esc(ui.loadError)}</p>` : ''}
         ${shown.length ? `<ul class="members">${shown.map(memberRow).join('')}</ul>`
           : `<p class="muted small">${all.length ? 'Nobody matches that search.' : 'Nobody yet. Add the first person with the form.'}</p>`}
       </section>
     </div>
 
-    <p class="fineprint">The admin console shows who has access, never anyone's drink log. The security rules only let each person read their own log. As the Firebase project owner you could still see stored data in the Firebase console, so treat that access with care. Removing someone stops them using Paceglass straight away; their sign-in account stays in Firebase until you delete it under Authentication in the Firebase console.</p>
+    <p class="fineprint">The admin console shows who has access, never anyone's drink log. The security rules only let each person read their own log. As the Firebase project owner you could still see stored data in the Firebase console, so treat that access with care. Treat codes like passwords: anyone with a code can open that person's log.</p>
   `;
+}
+
+function justAddedPanel(p) {
+  return `<div class="new-code" role="status">
+    <p><b>${esc(p.name)}</b>'s code is ready. They'll use it to sign in to Paceglass.</p>
+    <p class="code-big" aria-label="Code ${esc([...p.code].join(' '))}">${esc(formatCode(p.code))}</p>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-primary" type="button" data-action="copy-code" data-id="${esc(p.id)}">Copy code</button>
+      <button class="btn btn-sm btn-plain" type="button" data-action="dismiss-new">Done</button>
+    </div>
+  </div>`;
 }
 
 function memberRow(m) {
   const active = m.status === 'active';
-  const confirming = ui.confirmRemove === m.email;
+  const isConfirm = (action) => ui.confirm && ui.confirm.id === m.id && ui.confirm.action === action;
+  if (ui.editing === m.id) {
+    return `<li class="member editing">
+      <form class="edit-form" data-id="${esc(m.id)}" novalidate>
+        <div class="field"><label for="ed-name-${esc(m.id)}">Name</label><input class="input" id="ed-name-${esc(m.id)}" name="name" maxlength="80" value="${esc(m.name)}"></div>
+        <div class="field"><label for="ed-note-${esc(m.id)}">Note</label><input class="input" id="ed-note-${esc(m.id)}" name="note" maxlength="200" value="${esc(m.note)}"></div>
+        <div class="btn-row"><button class="btn btn-sm btn-primary" type="submit">Save</button><button class="btn btn-sm btn-plain" type="button" data-action="cancel-edit">Cancel</button></div>
+      </form>
+    </li>`;
+  }
   return `<li class="member">
     <div class="who">
-      <b>${esc(m.name || m.email)}</b>
-      ${m.name ? `<span class="email">${esc(m.email)}</span>` : ''}
+      <b>${esc(m.name || 'No name')}</b>
       <span class="meta">${m.createdAt ? `Added ${esc(dateFmt.format(new Date(m.createdAt)))}` : 'Just added'}${m.note ? `. ${esc(m.note)}` : ''}</span>
     </div>
     <span class="pill ${active ? 'on' : 'off'}">${active ? 'Active' : 'Paused'}</span>
+    <div class="code-row">
+      <span class="code-chip num" aria-label="Code ${esc([...(m.code || '')].join(' '))}">${esc(formatCode(m.code))}</span>
+      <button class="link-btn" type="button" data-action="copy-code" data-id="${esc(m.id)}">Copy code</button>
+    </div>
     <div class="actions">
-      <button class="btn btn-sm btn-quiet" type="button" data-action="resend" data-email="${esc(m.email)}">Resend invite</button>
-      <button class="btn btn-sm btn-quiet" type="button" data-action="${active ? 'pause' : 'resume'}" data-email="${esc(m.email)}">${active ? 'Pause access' : 'Restore access'}</button>
-      <button class="btn btn-sm btn-danger" type="button" data-action="remove" data-email="${esc(m.email)}">${confirming ? 'Tap again to remove' : 'Remove'}</button>
+      <button class="btn btn-sm btn-quiet" type="button" data-action="edit" data-id="${esc(m.id)}">Edit</button>
+      <button class="btn btn-sm btn-quiet" type="button" data-action="new-code" data-id="${esc(m.id)}">${isConfirm('new-code') ? 'Tap again: old code stops working' : 'New code'}</button>
+      <button class="btn btn-sm btn-quiet" type="button" data-action="${active ? 'pause' : 'resume'}" data-id="${esc(m.id)}">${active ? 'Pause access' : 'Restore access'}</button>
+      <button class="btn btn-sm btn-danger" type="button" data-action="remove" data-id="${esc(m.id)}">${isConfirm('remove') ? 'Tap again: deletes their log too' : 'Remove'}</button>
     </div>
   </li>`;
 }
 
-// ---------------------------------------------------------------- data
+// ---------------------------------------------------------------- helpers
 
 async function loadMembers() {
   try {
@@ -163,7 +188,7 @@ function toast(text) {
   el.textContent = text;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 5000);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
 }
 
 function setStatus(id, text, tone = '') {
@@ -171,6 +196,27 @@ function setStatus(id, text, tone = '') {
   if (!el) return;
   el.textContent = text;
   el.className = `status ${tone}`;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { /* ignore */ }
+    ta.remove();
+    return ok;
+  }
+}
+
+function findMember(id) {
+  return ui.members.find((m) => m.id === id) || (ui.justAdded && ui.justAdded.id === id ? ui.justAdded : null);
 }
 
 // ---------------------------------------------------------------- events
@@ -187,7 +233,6 @@ document.addEventListener('submit', async (ev) => {
     setStatus('si-status', 'Signing in…');
     try {
       await ui.backend.signIn(email, password);
-      // onAuth takes it from here
     } catch (err) {
       setStatus('si-status', friendlyError(err), 'error');
       btn.disabled = false;
@@ -197,25 +242,34 @@ document.addEventListener('submit', async (ev) => {
 
   if (form.id === 'add-form') {
     ev.preventDefault();
-    const email = normaliseEmail(form.email.value);
     const name = form.name.value.trim();
     const note = form.note.value.trim();
-    if (!isValidEmail(email)) { setStatus('add-status', 'Enter a valid email address.', 'error'); form.email.focus(); return; }
-    const existing = ui.members.find((m) => m.email === email);
-    if (existing && existing.status === 'active') { setStatus('add-status', `${email} already has access.`, 'error'); return; }
+    if (!name) { setStatus('add-status', 'Enter their name.', 'error'); form.name.focus(); return; }
     const btn = document.getElementById('add-submit');
     btn.disabled = true;
-    setStatus('add-status', 'Adding…');
+    setStatus('add-status', 'Creating their code…');
     try {
-      const res = await ui.backend.addMember({ email, name, note });
+      const { id, code } = await ui.backend.addMember({ name, note });
+      ui.justAdded = { id, name, code };
       await loadMembers();
       renderDashboard();
-      setStatus('add-status', res.emailSent
-        ? `Added ${name || email}. They've been emailed a link to set their password.`
-        : `Added ${name || email}, but the invite email didn't send. Use "Resend invite".`, res.emailSent ? 'ok' : 'error');
     } catch (err) {
       setStatus('add-status', friendlyError(err), 'error');
       btn.disabled = false;
+    }
+    return;
+  }
+
+  if (form.classList.contains('edit-form')) {
+    ev.preventDefault();
+    try {
+      await ui.backend.updateMember(form.dataset.id, { name: form.name.value.trim(), note: form.note.value.trim() });
+      ui.editing = null;
+      await loadMembers();
+      renderDashboard();
+      toast('Saved');
+    } catch (err) {
+      toast(friendlyError(err));
     }
   }
 });
@@ -228,38 +282,69 @@ document.addEventListener('click', async (ev) => {
   if (ev.target.id === 'si-forgot') {
     const email = document.getElementById('si-email').value;
     if (!isValidEmail(email)) { setStatus('si-status', 'Type your email above first, then tap "Forgot your password?".', 'error'); return; }
-    try { await ui.backend.sendSetPasswordEmail(email); } catch { /* same message either way */ }
-    setStatus('si-status', 'If that email has an account, a link to set a new password is on its way.', 'ok');
+    try { await ui.backend.sendPasswordReset(email); } catch { /* same message either way */ }
+    setStatus('si-status', 'If that email has an admin account, a link to set a new password is on its way.', 'ok');
     return;
   }
 
   const el = ev.target.closest('[data-action]');
   if (!el) return;
-  const { action, email } = el.dataset;
-  if (action !== 'remove') ui.confirmRemove = null;
+  const { action, id } = el.dataset;
+  const twoTap = action === 'remove' || action === 'new-code';
+  if (!twoTap) ui.confirm = null;
+  const m = id ? findMember(id) : null;
 
   try {
-    if (action === 'refresh') {
-      await loadMembers();
-      renderDashboard();
-    } else if (action === 'resend') {
-      el.disabled = true;
-      await ui.backend.sendSetPasswordEmail(email);
-      toast(`Invite sent again to ${email}`);
-      el.disabled = false;
-    } else if (action === 'pause' || action === 'resume') {
-      el.disabled = true;
-      await ui.backend.setMemberStatus(email, action === 'pause' ? 'disabled' : 'active');
-      await loadMembers();
-      renderDashboard();
-      toast(action === 'pause' ? `Paused access for ${email}` : `Restored access for ${email}`);
-    } else if (action === 'remove') {
-      if (ui.confirmRemove !== email) { ui.confirmRemove = email; renderDashboard(); return; }
-      ui.confirmRemove = null;
-      await ui.backend.removeMember(email);
-      await loadMembers();
-      renderDashboard();
-      toast(`Removed ${email}`);
+    switch (action) {
+      case 'refresh':
+        await loadMembers();
+        renderDashboard();
+        break;
+      case 'copy-code':
+        toast(await copyText(formatCode(m.code)) ? `Copied ${formatCode(m.code)}` : 'Couldn\'t copy.');
+        break;
+      case 'dismiss-new':
+        ui.justAdded = null;
+        renderDashboard();
+        break;
+      case 'edit':
+        ui.editing = id;
+        renderDashboard();
+        document.getElementById(`ed-name-${id}`)?.focus();
+        break;
+      case 'cancel-edit':
+        ui.editing = null;
+        renderDashboard();
+        break;
+      case 'new-code': {
+        if (!ui.confirm || ui.confirm.id !== id || ui.confirm.action !== action) { ui.confirm = { id, action }; renderDashboard(); break; }
+        ui.confirm = null;
+        el.disabled = true;
+        const code = await ui.backend.newCode(id);
+        ui.justAdded = { id, name: m.name, code };
+        await loadMembers();
+        renderDashboard();
+        toast(`New code for ${m.name || 'them'}: ${formatCode(code)}`);
+        break;
+      }
+      case 'pause':
+      case 'resume':
+        el.disabled = true;
+        await ui.backend.setMemberStatus(id, action === 'pause' ? 'disabled' : 'active');
+        await loadMembers();
+        renderDashboard();
+        toast(action === 'pause' ? `Paused access for ${m.name || 'them'}` : `Restored access for ${m.name || 'them'}`);
+        break;
+      case 'remove':
+        if (!ui.confirm || ui.confirm.id !== id || ui.confirm.action !== action) { ui.confirm = { id, action }; renderDashboard(); break; }
+        ui.confirm = null;
+        el.disabled = true;
+        await ui.backend.removeMember(id);
+        if (ui.justAdded?.id === id) ui.justAdded = null;
+        await loadMembers();
+        renderDashboard();
+        toast(`Removed ${m?.name || 'them'}`);
+        break;
     }
   } catch (err) {
     toast(friendlyError(err));
@@ -281,7 +366,7 @@ document.addEventListener('input', (ev) => {
 async function boot() {
   if (!cloudEnabled()) { renderNotConfigured(); return; }
   try {
-    ui.backend = await getBackend();
+    ui.backend = await getBackend('admin');
   } catch {
     root.innerHTML = `<section class="card signin-card"><span class="badge">Admin console</span><h1>Can't connect</h1>
       <p class="muted">The admin console couldn't reach Firebase. Check your connection and reload the page.</p>
@@ -291,16 +376,17 @@ async function boot() {
   ui.backend.onAuth(async (user) => {
     ui.user = user;
     ui.members = [];
+    ui.justAdded = null;
     if (!user) { renderSignIn(); return; }
     root.innerHTML = '<section class="card signin-card"><p class="muted">Checking your access…</p></section>';
-    let access;
+    let admin = false;
     try {
-      access = await ui.backend.getAccess(user);
+      admin = await ui.backend.isAdmin(user);
     } catch (err) {
       renderSignIn(friendlyError(err), 'error');
       return;
     }
-    if (!access.admin) { renderNotAdmin(user); return; }
+    if (!admin) { renderNotAdmin(user); return; }
     await loadMembers();
     renderDashboard();
   });

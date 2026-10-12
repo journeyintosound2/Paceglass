@@ -22,6 +22,12 @@
 - [x] Firebase sign-in and cloud saving, invite-only
 - [x] Admin console: add people (invite email), resend invite, pause or restore access, remove
 
+## v0.4
+
+- [x] Personal sign-in codes instead of email, created in the admin console
+- [x] "Continue without signing in" for local-only use
+- [x] New code, edit, pause and remove in the admin console
+
 ## Next: things to learn from testing
 
 - Is tapping the glass obvious, or does it need a separate "Add" button?
@@ -31,7 +37,7 @@
 
 ## Planned
 
-- **Account deletion.** Let people delete their own account and log from Settings, and let admins fully delete sign-in accounts. Both need a small Cloud Function, because the browser SDK can't delete other users.
+- **Account deletion.** Let people delete their own log from Settings, and have replaced or removed codes' hidden sign-in accounts deleted automatically. The second needs a small Cloud Function.
 - **App Check.** Turn on Firebase App Check to limit the project to the real app.
 - **Reminders.** An evening nudge to log today, and a check-in at the user's usual drinking time. This needs push notifications. On iPhone, web push only works once the app is added to the home screen (iOS 16.4+).
 - **Take-a-break length.** "30 days" or "until 1 Feb", with a countdown and a finish-line moment.

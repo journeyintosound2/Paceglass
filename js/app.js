@@ -21,7 +21,8 @@ import {
   isLogged, load, markAlcoholFree, migrate, newerCopy, removeEntry, removeStored, save, setDayTotal, setNote,
   updateSettings, userStorageKey,
 } from './store.js';
-import { cloudEnabled, friendlyError, getBackend, isValidEmail } from './cloud.js';
+import { cloudEnabled, friendlyError, getBackend } from './cloud.js';
+import { isCodeShape, normaliseCode } from './codes.js';
 import {
   currentAfStreak, hoursAlcoholFree, longestAfStreak, missingDays, monthSummary, planProgress,
   recentWeeks, savings, summariseRange, weekSummary,
@@ -51,8 +52,10 @@ const shortDate = (key) => new Intl.DateTimeFormat('en-AU', { day: 'numeric', mo
 // Signed-in session when the cloud is set up (see js/cloud.js). In local-only mode user is null.
 const session = {
   backend: null,
-  user: null, // { uid, email }
-  admin: false,
+  user: null, // { uid, email } of the code's hidden sign-in account
+  wantCode: false,
+  memberId: null, // the person; their log is saved under this
+  name: '',
   storageKey: STORAGE_KEY,
   offline: false,
   sync: 'idle', // 'idle' | 'saving' | 'saved' | 'error' | 'offline'
@@ -606,12 +609,17 @@ function renderSettings() {
     ${session.user ? `
     <section class="card block">
       <h2>Your account</h2>
-      <p>Signed in as <b>${esc(session.user.email)}</b>.</p>
+      <p>Signed in${session.name ? ` as <b>${esc(session.name)}</b>` : ''} with your personal code.</p>
       <p class="small muted" id="sync-status">${esc(syncText())}</p>
       <div class="btn-row">
         <button class="btn btn-sm btn-quiet" type="button" data-action="sign-out">Sign out</button>
-        ${session.admin ? '<a class="btn btn-sm btn-quiet" href="admin.html">Admin console</a>' : ''}
       </div>
+    </section>` : cloudEnabled() ? `
+    <section class="card block">
+      <h2>Your account</h2>
+      <p>You're using Paceglass without signing in. Your log is kept on this device only.</p>
+      <p class="small muted">If you have a personal code, sign in to back up your log and use it on other devices. What you've logged so far comes with you.</p>
+      <button class="btn btn-sm btn-primary" type="button" data-action="guest-sign-in">Sign in with a code</button>
     </section>` : ''}
 
     <section class="card block">
@@ -710,7 +718,7 @@ function renderSettings() {
     <section class="block about">
       <h2>About</h2>
       <p class="small muted">A standard drink in Australia is 10 grams of alcohol. The Australian guidelines recommend no more than 10 standard drinks a week and no more than 4 on any one day to reduce the risk of harm.</p>
-      <p class="fineprint">Paceglass is a prototype and offers general information, not medical advice. The pace note is not a blood alcohol estimate. Never use it to decide whether you're safe to drive. Version 0.3.0.</p>
+      <p class="fineprint">Paceglass is a prototype and offers general information, not medical advice. The pace note is not a blood alcohol estimate. Never use it to decide whether you're safe to drive. Version 0.4.0.</p>
       <a class="admin-link" href="admin.html">Admin console</a>
     </section>
   `;
@@ -1546,7 +1554,7 @@ function setSync(status) {
 }
 
 function scheduleCloudSave(delay = 1200) {
-  if (!session.user || !session.backend || session.offline) return;
+  if (!session.memberId || !session.backend || session.offline) return;
   clearTimeout(session.saveTimer);
   setSync('saving');
   session.saveTimer = setTimeout(cloudSaveNow, delay);
@@ -1555,8 +1563,8 @@ function scheduleCloudSave(delay = 1200) {
 function cloudSaveNow() {
   clearTimeout(session.saveTimer);
   session.saveTimer = null;
-  if (!session.user || !session.backend) return Promise.resolve();
-  const p = session.backend.saveUserData(session.user.uid, JSON.stringify(state), state.savedAt || Date.now())
+  if (!session.memberId || !session.backend) return Promise.resolve();
+  const p = session.backend.saveUserData(session.memberId, JSON.stringify(state), state.savedAt || Date.now())
     .then(() => { if (session.pending === p) setSync('saved'); })
     .catch(() => { setSync('error'); session.saveTimer = setTimeout(cloudSaveNow, 15000); });
   session.pending = p;
@@ -1571,7 +1579,7 @@ function flushCloudSave() {
 
 async function pullRemote() {
   try {
-    const r = await session.backend.loadUserData(session.user.uid);
+    const r = await session.backend.loadUserData(session.memberId);
     if (!r) return;
     const remote = migrate(JSON.parse(r.stateJson));
     if (!remote.savedAt) remote.savedAt = r.clientUpdatedAt;
@@ -1585,60 +1593,90 @@ async function pullRemote() {
 }
 
 const LAST_USER_KEY = 'paceglass:lastUser';
-function rememberUser(user, admin) {
-  try { localStorage.setItem(LAST_USER_KEY, JSON.stringify({ uid: user.uid, email: user.email, admin })); } catch { /* ignore */ }
+function rememberUser() {
+  try { localStorage.setItem(LAST_USER_KEY, JSON.stringify({ uid: session.user.uid, memberId: session.memberId, name: session.name })); } catch { /* ignore */ }
 }
 function lastUser() {
   try { return JSON.parse(localStorage.getItem(LAST_USER_KEY) || 'null'); } catch { return null; }
 }
+
+const GUEST_KEY = 'paceglass:guest';
+function isGuest() {
+  try { return localStorage.getItem(GUEST_KEY) === '1'; } catch { return false; }
+}
+function setGuest(on) {
+  try { if (on) localStorage.setItem(GUEST_KEY, '1'); else localStorage.removeItem(GUEST_KEY); } catch { /* ignore */ }
+}
+
+/** Load Firebase and start listening for sign-in, if that hasn't happened yet. */
+async function ensureBackend() {
+  if (session.backend) return session.backend;
+  session.backend = await getBackend('app');
+  session.backend.onAuth((user) => { handleAuth(user); });
+  return session.backend;
+}
+
+const GATE_MARK = `<div class="gate-mark" aria-hidden="true">${glassSVG({ kind: 'drink', level: 0.45 })}</div>`;
+const ADMIN_LINK = '<a class="admin-link" href="admin.html">Admin console</a>';
 
 function showGate(kind, opts = {}) {
   document.querySelectorAll('dialog[open]').forEach((d) => d.close());
   document.body.classList.add('gated');
   const gate = $('#gate');
   gate.hidden = false;
-  const adminLink = '<a class="admin-link" href="admin.html">Admin console</a>';
   if (kind === 'loading') {
     gate.innerHTML = `<section class="card signin-card"><span class="badge">Paceglass</span><p class="muted">${esc(opts.text || 'Loading…')}</p></section>`;
-  } else if (kind === 'signin') {
+  } else if (kind === 'welcome') {
+    gate.innerHTML = `
+      <section class="card signin-card welcome-card">
+        ${GATE_MARK}
+        <h1 id="gate-title">Welcome to Paceglass</h1>
+        <p class="muted">Track your drinking, see your progress and work towards your goals at your own pace.</p>
+        <button class="btn btn-primary btn-block" type="button" data-action="gate-code">Sign in</button>
+        <button class="btn btn-quiet btn-block" type="button" data-action="gate-guest">Continue without signing in</button>
+        <p class="tiny">Signing in needs the personal code you were given, and keeps your log backed up. Without signing in, your log stays on this device only.</p>
+        ${ADMIN_LINK}
+      </section>`;
+  } else if (kind === 'code') {
     gate.innerHTML = `
       <section class="card signin-card">
         <span class="badge">Paceglass</span>
-        <h1 id="gate-title">Sign in</h1>
-        <p class="muted">Paceglass is invite-only for now. Sign in with the email your invite was sent to.</p>
-        <div class="secure-note"><b>Private.</b> Your drink log is saved to your account. Paceglass doesn't show it to anyone else.</div>
+        <h1 id="gate-title">Sign in with your code</h1>
+        <p class="muted">Enter the personal code you were given.</p>
+        <div class="secure-note"><b>Private.</b> Your code is checked securely, and your log is only shown to you.</div>
         <form id="gate-form" class="signin-form" novalidate>
           <div class="field">
-            <label for="g-email">Email</label>
-            <input class="input" id="g-email" name="email" type="email" autocomplete="username" inputmode="email" required value="${esc(opts.email || '')}">
-          </div>
-          <div class="field">
-            <label for="g-password">Password</label>
-            <input class="input" id="g-password" name="password" type="password" autocomplete="current-password" required>
+            <label for="g-code">Your code</label>
+            <input class="input code-input" id="g-code" name="code" autocomplete="one-time-code" autocapitalize="characters" autocorrect="off" spellcheck="false"
+              inputmode="text" maxlength="12" placeholder="XXXX-XXXX" required>
           </div>
           <button class="btn btn-primary btn-block" type="submit" id="g-submit">Sign in</button>
-          <p class="status ${opts.tone || ''}" id="g-status" role="status">${esc(opts.message || 'Ready. Enter your email and password.')}</p>
-          <button class="link-btn" type="button" data-action="gate-reset">Haven't set a password yet, or forgotten it?</button>
+          <p class="status ${opts.tone || ''}" id="g-status" role="status">${esc(opts.message || 'Ready. Enter your code.')}</p>
         </form>
-        ${adminLink}
+        <button class="link-btn" type="button" data-action="gate-back">Back</button>
+        ${ADMIN_LINK}
       </section>`;
+    $('#g-code').focus();
   } else if (kind === 'noaccess') {
     gate.innerHTML = `
       <section class="card signin-card">
         <span class="badge">Paceglass</span>
-        <h1 id="gate-title">No access yet</h1>
-        <p class="muted">You're signed in as <b>${esc(opts.email)}</b>, but this account doesn't have access to Paceglass${opts.paused ? ' at the moment' : ''}. If you think it should, contact the person who invited you.</p>
-        <button class="btn btn-quiet" type="button" data-action="sign-out">Sign in with another account</button>
-        ${adminLink}
+        <h1 id="gate-title">${opts.paused ? 'Access paused' : 'Code not active'}</h1>
+        <p class="muted">${opts.paused
+          ? 'Access for this code has been paused. Your log is safe. Contact the person who gave you your code.'
+          : 'This code isn\'t active any more. It may have been replaced with a new one. Contact the person who gave you your code.'}</p>
+        <button class="btn btn-quiet" type="button" data-action="sign-out">Use a different code</button>
+        ${ADMIN_LINK}
       </section>`;
   } else if (kind === 'offline') {
     gate.innerHTML = `
       <section class="card signin-card">
         <span class="badge">Paceglass</span>
         <h1 id="gate-title">Can't connect</h1>
-        <p class="muted">Paceglass needs to be online the first time you sign in on this device. Check your connection and try again.</p>
-        <button class="btn btn-primary" type="button" data-action="gate-retry">Try again</button>
-        ${adminLink}
+        <p class="muted">Paceglass needs to be online the first time you sign in on this device. Check your connection and try again, or use Paceglass on this device without signing in.</p>
+        <button class="btn btn-primary btn-block" type="button" data-action="gate-retry">Try again</button>
+        <button class="btn btn-quiet btn-block" type="button" data-action="gate-guest">Continue without signing in</button>
+        ${ADMIN_LINK}
       </section>`;
   }
 }
@@ -1652,31 +1690,34 @@ function hideGate() {
 async function handleAuth(user) {
   if (!user) {
     session.user = null;
-    showGate('signin');
+    session.memberId = null;
+    if (isGuest()) return; // using Paceglass without signing in
+    showGate(session.wantCode ? 'code' : 'welcome');
+    session.wantCode = false;
     return;
   }
-  showGate('loading', { text: 'Checking your access…' });
+  showGate('loading', { text: 'Opening your log…' });
   let access;
   try {
     access = await session.backend.getAccess(user);
   } catch (err) {
     const last = lastUser();
-    if (last && last.uid === user.uid) access = { admin: last.admin, member: { status: 'active' } };
-    else { showGate('signin', { message: friendlyError(err), tone: 'error', email: user.email }); return; }
+    if (last && last.uid === user.uid) access = { memberId: last.memberId, name: last.name, status: 'active' };
+    else { showGate('code', { message: friendlyError(err), tone: 'error' }); return; }
   }
-  const allowed = access.admin || access.member?.status === 'active';
-  if (!allowed) { showGate('noaccess', { email: user.email, paused: access.member?.status === 'disabled' }); return; }
-  await enterApp(user, access.admin);
+  if (!access || access.status !== 'active') { showGate('noaccess', { paused: access?.status === 'disabled' }); return; }
+  await enterApp(user, access);
 }
 
-async function enterApp(user, admin) {
+async function enterApp(user, access) {
   session.user = user;
-  session.admin = admin;
+  session.memberId = access.memberId;
+  session.name = access.name || '';
   session.offline = false;
-  session.storageKey = userStorageKey(user.uid);
-  rememberUser(user, admin);
+  session.storageKey = userStorageKey(access.memberId);
+  rememberUser();
 
-  // This device's copy: the account's own, or a log kept here before signing in was set up.
+  // This device's copy: the person's own, or a log kept here before sign-in was set up.
   let local = hasStoredState(undefined, session.storageKey) ? load(undefined, new Date(), session.storageKey) : null;
   let fromLegacy = false;
   if (!local && hasStoredState(undefined, STORAGE_KEY)) {
@@ -1685,7 +1726,7 @@ async function enterApp(user, admin) {
   }
   let remote = null;
   try {
-    const r = await session.backend.loadUserData(user.uid);
+    const r = await session.backend.loadUserData(access.memberId);
     if (r) {
       remote = migrate(JSON.parse(r.stateJson));
       if (!remote.savedAt) remote.savedAt = r.clientUpdatedAt;
@@ -1704,10 +1745,11 @@ async function enterApp(user, admin) {
 
 /** No connection when opening the app: carry on with this device's copy for the last person signed in. */
 function enterOffline(last) {
-  session.user = { uid: last.uid, email: last.email };
-  session.admin = Boolean(last.admin);
+  session.user = { uid: last.uid, email: '' };
+  session.memberId = last.memberId;
+  session.name = last.name || '';
   session.offline = true;
-  session.storageKey = userStorageKey(last.uid);
+  session.storageKey = userStorageKey(last.memberId);
   state = load(undefined, new Date(), session.storageKey);
   hideGate();
   startApp();
@@ -1720,49 +1762,67 @@ async function signOutNow() {
   if (key !== STORAGE_KEY) removeStored(undefined, key);
   state = createState();
   session.user = null;
-  session.admin = false;
+  session.memberId = null;
+  session.name = '';
   session.storageKey = STORAGE_KEY;
-  if (session.backend) await session.backend.signOut(); // onAuth shows the sign-in screen
-  else showGate('signin');
+  if (session.backend) await session.backend.signOut(); // onAuth shows the welcome screen
+  else showGate('welcome');
 }
 
-// Sign-in screen form and links.
+// Sign-in screen.
 document.addEventListener('submit', async (ev) => {
   if (ev.target.id !== 'gate-form') return;
   ev.preventDefault();
-  const f = ev.target;
+  const code = ev.target.code.value;
   const status = $('#g-status');
-  if (!isValidEmail(f.email.value) || !f.password.value) {
-    status.textContent = 'Enter your email and password.';
+  if (!isCodeShape(code)) {
+    status.textContent = normaliseCode(code).length < 8
+      ? 'Codes have 8 letters and numbers, like K7QM-3XRP.'
+      : 'That code doesn\'t look right. Check it and try again.';
     status.className = 'status error';
     return;
   }
   $('#g-submit').disabled = true;
-  status.textContent = 'Signing in…';
+  status.textContent = 'Checking your code…';
   status.className = 'status';
   try {
-    await session.backend.signIn(f.email.value, f.password.value);
+    await session.backend.signInWithCode(normaliseCode(code));
   } catch (err) {
-    status.textContent = friendlyError(err);
+    status.textContent = friendlyError(err, { signingInWithCode: true });
     status.className = 'status error';
     $('#g-submit').disabled = false;
   }
 }, true);
 
-document.addEventListener('click', async (ev) => {
-  const el = ev.target.closest('[data-action="gate-reset"], [data-action="gate-retry"]');
+// Tidy the code as it's typed: capitals and a dash in the middle.
+document.addEventListener('input', (ev) => {
+  if (ev.target.id !== 'g-code') return;
+  const raw = normaliseCode(ev.target.value).slice(0, 8);
+  ev.target.value = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+});
+
+document.addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-action="gate-code"], [data-action="gate-back"], [data-action="gate-retry"], [data-action="gate-guest"], [data-action="guest-sign-in"]');
   if (!el) return;
-  if (el.dataset.action === 'gate-retry') { location.reload(); return; }
-  const email = $('#g-email')?.value;
-  const status = $('#g-status');
-  if (!isValidEmail(email)) {
-    status.textContent = 'Type your email above first, then tap the link again.';
-    status.className = 'status error';
-    return;
+  const a = el.dataset.action;
+  if (a === 'gate-retry') location.reload();
+  else if (a === 'gate-code') showGate('code');
+  else if (a === 'gate-back') showGate('welcome');
+  else if (a === 'gate-guest') {
+    setGuest(true);
+    state = load();
+    session.storageKey = STORAGE_KEY;
+    hideGate();
+    startApp();
+  } else if (a === 'guest-sign-in') {
+    // From Settings while using Paceglass without signing in.
+    setGuest(false);
+    flushCloudSave();
+    if (session.backend) { showGate('code'); return; }
+    session.wantCode = true;
+    showGate('loading');
+    ensureBackend().catch(() => showGate('offline'));
   }
-  try { await session.backend.sendSetPasswordEmail(email); } catch { /* same message either way */ }
-  status.textContent = 'If that email has an account, a link to set your password is on its way. Check your inbox and junk folder.';
-  status.className = 'status ok';
 });
 
 function startApp() {
@@ -1777,21 +1837,19 @@ async function boot() {
     if (saved) ui.tab = saved;
   } catch { /* ignore */ }
 
-  if (!cloudEnabled()) {
+  if (!cloudEnabled() || isGuest()) {
     state = load();
     startApp();
     return;
   }
   showGate('loading');
   try {
-    session.backend = await getBackend();
+    await ensureBackend();
   } catch {
     const last = lastUser();
     if (last) enterOffline(last);
     else showGate('offline');
-    return;
   }
-  session.backend.onAuth((user) => { handleAuth(user); });
 }
 
 boot();

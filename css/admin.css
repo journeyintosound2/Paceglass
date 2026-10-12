@@ -20,7 +20,7 @@ a.appbar-btn { display: inline-flex; align-items: center; text-decoration: none;
 .members-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 ul.members { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .member {
-  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "who pill" "actions actions";
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "who pill" "code code" "actions actions";
   gap: 10px 12px; align-items: start;
   padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft);
 }
@@ -34,6 +34,21 @@ ul.members { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; 
 .pill { grid-area: pill; padding: 4px 12px; border-radius: 999px; font-size: .76rem; font-weight: 900; }
 .pill.on { background: var(--green-soft); color: var(--green); }
 .pill.off { background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+
+.code-row { grid-area: code; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.code-chip {
+  display: inline-block; padding: 6px 12px; border-radius: var(--radius-xs);
+  background: var(--surface); border: 1px dashed var(--line-strong);
+  font-weight: 900; letter-spacing: .12em; font-size: 1rem;
+}
+.member.editing { display: block; }
+.edit-form { display: grid; gap: 10px; }
+
+.new-code {
+  display: grid; gap: 10px; padding: 16px; border-radius: var(--radius-sm);
+  background: var(--green-soft); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+}
+.code-big { font-size: 2rem; font-weight: 900; letter-spacing: .14em; color: var(--ink); line-height: 1.1; }
 
 .toast-admin { bottom: calc(24px + var(--safe-b)); }
 

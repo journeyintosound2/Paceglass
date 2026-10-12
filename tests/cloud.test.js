@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 
 import { friendlyError, isValidEmail, normaliseEmail } from '../js/cloud.js';
 import {
+  CODE_ALPHABET, codeAuthEmail, codePassword, formatCode, generateCode, isCodeShape, normaliseCode,
+} from '../js/codes.js';
+import {
   STORAGE_KEY, addEntry, createState, hasAnyData, load, newerCopy, removeStored, save, userStorageKey,
 } from '../js/store.js';
 
@@ -20,7 +23,8 @@ test('emails are compared in lower case and checked loosely', () => {
 });
 
 test('Firebase errors become plain sentences', () => {
-  assert.match(friendlyError({ code: 'auth/invalid-credential' }), /don't match/);
+  assert.match(friendlyError({ code: 'auth/invalid-credential' }), /email and password don't match/);
+  assert.match(friendlyError({ code: 'auth/invalid-credential' }, { signingInWithCode: true }), /code doesn't match/);
   assert.match(friendlyError({ code: 'auth/too-many-requests' }), /Too many attempts/);
   assert.match(friendlyError({ code: 'permission-denied' }), /permission/);
   assert.match(friendlyError({}), /Something went wrong/);
@@ -55,4 +59,30 @@ test('save can keep the cloud copy\'s timestamp', () => {
   save(s, st, 'k', { touch: false });
   assert.equal(load(st, new Date(), 'k').savedAt, 12345);
   assert.equal(hasAnyData(createState()), false);
+});
+
+test('codes are 8 characters from an unambiguous alphabet', () => {
+  for (let i = 0; i < 200; i++) {
+    const c = generateCode();
+    assert.equal(c.length, 8);
+    assert.ok([...c].every((ch) => CODE_ALPHABET.includes(ch)));
+    assert.ok(isCodeShape(c));
+  }
+  assert.ok(!/[01OIL]/.test(CODE_ALPHABET));
+  const seen = new Set(Array.from({ length: 500 }, generateCode));
+  assert.equal(seen.size, 500);
+});
+
+test('codes are forgiving to type', () => {
+  assert.equal(normaliseCode(' k7qm-3xrp '), 'K7QM3XRP');
+  assert.equal(formatCode('k7qm3xrp'), 'K7QM-3XRP');
+  assert.equal(isCodeShape('K7QM 3XRP'), true);
+  assert.equal(isCodeShape('K7QM-3XR'), false);
+  assert.equal(isCodeShape('K7QM-3XR0'), false); // 0 is not in the alphabet
+});
+
+test('a code maps to one hidden sign-in account', () => {
+  assert.equal(codeAuthEmail('k7qm-3xrp', 'demo.firebaseapp.com'), 'u-k7qm3xrp@demo.firebaseapp.com');
+  assert.equal(codePassword('k7qm 3xrp'), codePassword('K7QM-3XRP'));
+  assert.ok(codePassword('K7QM3XRP').length >= 6);
 });

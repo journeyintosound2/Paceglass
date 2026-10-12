@@ -4,7 +4,7 @@ A private drink tracker for people who want to cut back or take a break from alc
 
 Every day on the calendar is a glass. Log drinks as you go and it fills up. An alcohol-free day stays clear. Along the way, Paceglass tells you what you might be gaining and what might feel hard at that stage, so the rough patches make sense when they arrive.
 
-> **Status:** prototype (v0.3.0). It's built for testing on a phone, not yet for public release.
+> **Status:** prototype (v0.4.0). It's built for testing on a phone, not yet for public release.
 
 ## What it does
 
@@ -19,8 +19,8 @@ Every day on the calendar is a glass. Log drinks as you go and it fills up. An a
 - **Insights.** A timeline of your current alcohol-free stretch, from the first day to three months and beyond, with "what you might notice" and "what might feel hard" for each stage. It also shows week-by-week totals, drinks avoided compared with before, money not spent and kilojoules not consumed.
 - **Craving timer.** Ride out an urge for 15 minutes, with practical tips and your own reasons shown back to you.
 - **Safety first.** People who drank heavily before stopping see a clear warning about alcohol withdrawal, plus Australian support lines.
-- **Invite-only accounts (optional).** With Firebase set up, people sign in with an account you create for them in the admin console, and their log is saved to the cloud so it's backed up and works across devices. The security rules let only them read it, and the admin console never shows it. The Firebase project owner can still see stored data in the Firebase console. Without Firebase, the app runs local-only, with data kept in the browser on the device.
-- **Admin console.** `admin.html` (linked as **Admin console** in the app). Sign in as an admin to add people, resend their invite, pause or restore access, or remove them.
+- **Personal codes (optional).** With Firebase set up, people sign in with a personal code (like `K7QM-3XRP`) that an admin creates for them, and their log is saved to the cloud so it's backed up and works across devices. The security rules let only that person read their log. Anyone can also **continue without signing in**, which keeps everything on that device only.
+- **Admin console.** `admin.html`, linked as **Admin console** in the app. Admins sign in with email and password to create people and their codes, issue new codes, and pause or remove access.
 
 ## Try it on your computer
 
@@ -52,14 +52,14 @@ Each person's data stays on their own phone until Firebase is set up; then it's 
 
 ## Accounts and the admin console (Firebase)
 
-Follow [`docs/FIREBASE-SETUP.md`](docs/FIREBASE-SETUP.md) to create the Firebase project, paste its settings into `js/firebase-config.js`, publish `firestore.rules` and make your account an admin. No passwords or admin emails are stored in this repository: Firebase Authentication checks passwords, and admin rights come from an `admins/{uid}` document you create in the Firebase console.
+Follow [`docs/FIREBASE-SETUP.md`](docs/FIREBASE-SETUP.md) to create the Firebase project, paste its settings into `js/firebase-config.js`, publish `firestore.rules` and make your account an admin. No passwords or admin emails are stored in this repository.
 
 How it works:
 
-1. In the admin console, you add someone by name and email.
-2. Paceglass records them as a member, creates their sign-in account, and Firebase emails them a link to set their own password.
-3. They open the app and sign in. Their log saves to `userData/{their uid}`, which the security rules let only them read.
-4. You can pause or remove their access at any time.
+1. In the admin console, you add someone by name. Paceglass makes them an 8-character code from an alphabet with no look-alike characters (no 0/O or 1/I/L).
+2. Behind the scenes, the code signs in to a hidden Firebase Authentication account. Firebase does the checking and rate-limits guessing.
+3. The person taps **Sign in** in the app and enters the code. Their log saves to `userData/{their id}`, keyed by person rather than by code, so issuing a new code doesn't lose anything.
+4. You can issue a new code, pause access or remove someone at any time.
 
 ## Project layout
 
@@ -68,7 +68,8 @@ index.html              App shell: the four screens, tab bar and sheets
 css/styles.css          All styles, with light and dark themes
 js/app.js               Rendering and interactions for the app, plus sign-in and cloud saving
 admin.html              Admin console page
-js/admin.js             Admin console: sign in, add, pause, restore and remove people
+js/admin.js             Admin console: sign in, create people and codes, new code, pause, remove
+js/codes.js             Personal codes: generate, tidy what people type, map to the hidden sign-in account
 css/admin.css           Admin console layout (builds on styles.css)
 js/cloud.js             Firebase sign-in and Firestore saving (SDK loaded from Google's CDN)
 js/firebase-config.js   Your Firebase project's web settings (empty = local-only mode)
@@ -121,7 +122,7 @@ A day's total is its entries plus `manual`, which is any amount added or taken a
 
 In local-only mode, clearing browser data deletes the log; that's why Settings has **Save a backup**.
 
-When signed in, the same state is stored per person under `paceglass:v1:{uid}` on the device and in Firestore at `userData/{uid}` as a JSON string. Each copy carries a `savedAt` time, and when the two differ, the most recently saved copy wins. Changes save to the cloud about a second after each edit, and are queued while offline. Signing out removes the copy from the device.
+When signed in, the same state is stored per person under `paceglass:v1:{memberId}` on the device and in Firestore at `userData/{memberId}` as a JSON string. A log kept without signing in moves into the account the first time that person signs in on the device. Each copy carries a `savedAt` time, and when the two differ, the most recently saved copy wins. Changes save to the cloud about a second after each edit, and are queued while offline. Signing out removes the copy from the device.
 
 ## Look and feel
 

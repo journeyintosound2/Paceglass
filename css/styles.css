@@ -638,6 +638,12 @@ main:focus { outline: none; }
 .status.error { color: var(--orange); }
 #add-status { text-align: left; }
 
+.gate-mark { width: 72px; height: 72px; border-radius: 20px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); display: grid; place-items: center; }
+.gate-mark .glass-svg { width: 40px; height: 48px; }
+.welcome-card .btn-block { width: 100%; }
+.code-input { font-size: 1.5rem; font-weight: 900; letter-spacing: .16em; text-align: center; text-transform: uppercase; }
+.code-input::placeholder { letter-spacing: .16em; color: var(--muted-light); }
+.signin-card > .link-btn { align-self: center; }
 .gate { max-width: 600px; margin: 0 auto; padding: 8px var(--gutter) 40px; }
 body.gated main, body.gated .tabbar, body.gated .appbar-btn { display: none; }
 .admin-link { font-size: .86rem; font-weight: 800; color: var(--brand); text-decoration: none; align-self: center; padding: 8px; }
