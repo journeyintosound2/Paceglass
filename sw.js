@@ -2,7 +2,7 @@
 // Network first for the app's own files (so updates show up straight away when online),
 // falling back to the cache when offline. Fonts are cached after first use.
 
-const CACHE = 'paceglass-v4';
+const CACHE = 'paceglass-v5';
 const SHELL = [
   './',
   'index.html',
@@ -59,8 +59,10 @@ self.addEventListener('fetch', (event) => {
 
   if (url.origin !== self.location.origin) return;
 
+  // 'no-cache' makes the browser check with GitHub Pages every time instead of reusing its own
+  // copy for up to 10 minutes, so a new version shows up the next time the app is opened.
   event.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

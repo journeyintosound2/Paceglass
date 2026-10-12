@@ -1337,6 +1337,9 @@ document.addEventListener('click', (ev) => {
     case 'sign-out':
       signOutNow();
       return;
+    case 'refresh-app':
+      refreshApp(el);
+      return;
     case 'export':
       download(`paceglass-backup-${today()}.json`, exportJSON(state));
       toast('Backup saved');
@@ -1824,6 +1827,34 @@ document.addEventListener('click', (ev) => {
     ensureBackend().catch(() => showGate('offline'));
   }
 });
+
+/**
+ * The refresh button: save anything waiting, fetch the latest version of the app and reload.
+ * Only clears the saved copy of the app's files once we know the server can be reached,
+ * so it never leaves the app unable to open offline.
+ */
+async function refreshApp(btn) {
+  if (!navigator.onLine) { toast('You\'re offline. Refresh when you\'re back online.'); return; }
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  try { await Promise.race([flushCloudSave(), new Promise((r) => setTimeout(r, 3000))]); } catch { /* ignore */ }
+  try {
+    const res = await fetch('./index.html', { cache: 'no-store' });
+    if (!res.ok) throw new Error('unreachable');
+    const reg = await navigator.serviceWorker?.getRegistration();
+    await reg?.update();
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+    toast('Couldn\'t reach Paceglass. Check your connection and try again.');
+    return;
+  }
+  location.reload();
+}
 
 function startApp() {
   applyTheme();
