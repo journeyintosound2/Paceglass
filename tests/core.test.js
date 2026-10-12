@@ -129,3 +129,35 @@ test('backup round-trips and rejects junk', () => {
   assert.throws(() => importJSON('not json'), /not a Paceglass backup/);
   assert.throws(() => importJSON('{"hello":1}'), /not a Paceglass backup/);
 });
+
+// ---- My drinks
+
+import { DRINK_ICON_IDS, defaultDrinks, guessIcon, moveItem } from '../js/drinks.js';
+
+test('every default drink has one of the five icons', () => {
+  for (const d of defaultDrinks()) assert.ok(DRINK_ICON_IDS.includes(d.icon), d.label);
+  const byId = Object.fromEntries(defaultDrinks().map((d) => [d.id, d.icon]));
+  assert.equal(byId.schooner, 'beer');
+  assert.equal(byId.wine, 'wine-red');
+  assert.equal(byId.sparkling, 'wine-white');
+  assert.equal(byId.spirit, 'spirit');
+  assert.equal(byId.premix, 'can');
+});
+
+test('drinks saved before icons existed get a sensible one', () => {
+  assert.equal(guessIcon({ label: 'Pinot Noir', abv: 13 }), 'wine-red');
+  assert.equal(guessIcon({ label: 'Sav Blanc', abv: 12 }), 'wine-white');
+  assert.equal(guessIcon({ label: 'Gin and tonic', abv: 5 }), 'spirit');
+  assert.equal(guessIcon({ label: 'Hard seltzer', abv: 4.5 }), 'can');
+  assert.equal(guessIcon({ label: 'Craft IPA', abv: 6.5 }), 'beer');
+  assert.equal(guessIcon({ label: 'Mystery', abv: 40 }), 'spirit');
+  const list = defaultDrinks([{ id: 'custom-1', label: 'Shiraz', abv: 14, volumeMl: 150, std: 1.7 }]);
+  assert.equal(list.at(-1).icon, 'wine-red');
+});
+
+test('moving a drink keeps everything else in order', () => {
+  assert.deepEqual(moveItem(['a', 'b', 'c', 'd'], 0, 2), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(moveItem(['a', 'b', 'c'], 2, 0), ['c', 'a', 'b']);
+  assert.deepEqual(moveItem(['a', 'b', 'c'], 1, 9), ['a', 'c', 'b']);
+  assert.deepEqual(moveItem(['a', 'b'], 5, 0), ['a', 'b']);
+});

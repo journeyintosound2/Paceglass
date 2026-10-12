@@ -5,7 +5,8 @@ import {
   addDays, daysBetween, formatDay, formatMonth, formatShortDay, formatTime, fromKey,
   monthGrid, startOfWeek, toKey, todayKey, weekdayLetters,
 } from './dates.js';
-import { PRESETS, standardDrinks } from './drinks.js';
+import { DRINK_ICON_IDS, PRESETS, defaultDrinks, guessIcon, moveItem, standardDrinks } from './drinks.js';
+import { DRINK_ICONS, drinkIconSVG } from './drink-icons.js';
 import { glassSVG, setGlassLevel } from './glass.js';
 import {
   CRAVING_TIPS, CUTBACK, MILD_WITHDRAWAL_SIGNS, PHASES, PLAN_SAFETY_TEXT, SAFETY_TEXT, SUPPORT,
@@ -40,6 +41,9 @@ const ui = {
   deleteArmed: false,
   endPlanArmed: false,
   planDraft: null,
+  editingDrinks: false,
+  resetDrinksArmed: false,
+  suppressClickUntil: 0,
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -102,10 +106,72 @@ function glassForDay(key, opts = {}) {
   return glassSVG({ level: total / glassRef(key), kind: dayKind(key), ...opts });
 }
 
-function allPresets() { return [...PRESETS, ...(state.settings.customPresets || [])]; }
+/** "My drinks": the person's own list, starting from the defaults until they edit it. */
+function myDrinks() {
+  const d = state.settings.drinks;
+  return Array.isArray(d) && d.length ? d : defaultDrinks(state.settings.customPresets || []);
+}
+
+function setMyDrinks(list) {
+  updateSettings(state, { drinks: list });
+}
+
+// Kept for older code paths: everything that lists drinks uses the person's list.
+const allPresets = myDrinks;
 
 function selectedPreset() {
-  return allPresets().find((p) => p.id === state.settings.lastPresetId) || PRESETS[0];
+  const list = myDrinks();
+  return list.find((p) => p.id === state.settings.lastPresetId) || list[0];
+}
+
+const pencilIcon = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="M13.5 6.5l4 4"/></svg>';
+const gripIcon = '<svg class="grip" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>';
+
+function drinkChipInner(p) {
+  return `${drinkIconSVG(p.icon || guessIcon(p), { size: 28 })}<span class="chip-text"><b>${esc(p.label)}</b><span>${fmt(p.std)} std</span></span>`;
+}
+
+function drinksSection(preset) {
+  const list = myDrinks();
+  if (ui.editingDrinks) {
+    return `
+    <section class="block drinks-block">
+      <div class="block-head">
+        <h2>My drinks</h2>
+        <button class="btn btn-sm btn-primary" type="button" data-action="drinks-edit" aria-pressed="true">Done</button>
+      </div>
+      <p class="tiny">Tap a drink to change it. Hold and drag to move it. Tap × to remove it.</p>
+      <div class="chip-grid editing" role="list" aria-label="My drinks, in order">
+        ${list.map((p) => `
+          <div class="chip-wrap" role="listitem">
+            <button class="chip" type="button" data-action="drink-edit" data-id="${esc(p.id)}" aria-label="Change ${esc(p.label)}">
+              ${drinkChipInner(p)}${gripIcon}
+            </button>
+            ${list.length > 1 ? `<button class="chip-x" type="button" data-action="drink-remove" data-id="${esc(p.id)}" aria-label="Remove ${esc(p.label)}">${xIcon(14)}</button>` : ''}
+          </div>`).join('')}
+        <div class="chip-wrap" role="listitem">
+          <button class="chip add-chip" type="button" data-action="drink-new" aria-label="Add a drink">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="link-btn reset-drinks" type="button" data-action="drinks-reset">${ui.resetDrinksArmed ? 'Tap again to go back to the standard list' : 'Go back to the standard list'}</button>
+    </section>`;
+  }
+  return `
+    <section class="block drinks-block">
+      <div class="block-head">
+        <h2>My drinks</h2>
+        <button class="icon-btn icon-btn-sm" type="button" data-action="drinks-edit" aria-pressed="false" aria-label="Edit my drinks" title="Edit my drinks">${pencilIcon}</button>
+      </div>
+      <div class="chips" role="group" aria-label="Choose what you're drinking">
+        ${list.map((p) => `
+          <button class="chip" type="button" data-action="choose" data-id="${esc(p.id)}" aria-pressed="${p.id === preset.id}">
+            ${drinkChipInner(p)}
+          </button>`).join('')}
+        <button class="chip" type="button" data-action="open-custom"><span class="chip-text"><b>Something else</b><span>Size and strength</span></span></button>
+      </div>
+    </section>`;
 }
 
 /** Built-in drink names read naturally in lower case ("a schooner"); the user's own names stay as typed. */
@@ -174,16 +240,7 @@ function renderToday() {
       <p class="message ${msg.tone}" aria-live="polite" id="today-msg">${esc(msg.text)}</p>
     </section>
 
-    <section class="block">
-      <h2>What are you drinking?</h2>
-      <div class="chips" role="group" aria-label="Drink type">
-        ${allPresets().map((p) => `
-          <button class="chip" type="button" data-action="choose" data-id="${esc(p.id)}" aria-pressed="${p.id === preset.id}">
-            <b>${esc(p.label)}</b><span>${fmt(p.std)} std</span>
-          </button>`).join('')}
-        <button class="chip" type="button" data-action="open-custom"><b>Something else</b><span>Size and strength</span></button>
-      </div>
-    </section>
+    ${drinksSection(preset)}
 
     <section class="card block">
       <h2>Today's drinks</h2>
@@ -718,7 +775,7 @@ function renderSettings() {
     <section class="block about">
       <h2>About</h2>
       <p class="small muted">A standard drink in Australia is 10 grams of alcohol. The Australian guidelines recommend no more than 10 standard drinks a week and no more than 4 on any one day to reduce the risk of harm.</p>
-      <p class="fineprint">Paceglass is a prototype and offers general information, not medical advice. The pace note is not a blood alcohol estimate. Never use it to decide whether you're safe to drive. Version 0.4.0.</p>
+      <p class="fineprint">Paceglass is a prototype and offers general information, not medical advice. The pace note is not a blood alcohol estimate. Never use it to decide whether you're safe to drive. Version 0.5.0.</p>
       <a class="admin-link" href="admin.html">Admin console</a>
     </section>
   `;
@@ -779,7 +836,7 @@ function renderDaySheet() {
       <div class="block">
         <h3 class="small">Add a drink</h3>
         <div class="chips">
-          ${allPresets().map((p) => `<button class="chip" type="button" data-action="day-add" data-id="${esc(p.id)}"><b>${esc(p.label)}</b><span>${fmt(p.std)} std</span></button>`).join('')}
+          ${myDrinks().map((p) => `<button class="chip" type="button" data-action="day-add" data-id="${esc(p.id)}">${drinkChipInner(p)}</button>`).join('')}
         </div>
       </div>
 
@@ -802,30 +859,139 @@ function renderDaySheet() {
     </div>`;
 }
 
-function renderCustomSheet() {
+/**
+ * The drink sheet, used three ways:
+ *  'oneoff' "Something else": log a drink that isn't in the list, optionally saving it
+ *  'new'    the + tile in edit mode: add a drink to the list
+ *  'edit'   tapping a drink in edit mode: change it, move it or remove it
+ */
+function renderCustomSheet(mode = 'oneoff', drink = null) {
+  const d = drink || { label: '', volumeMl: 330, abv: 6, icon: '' };
+  const icon = d.icon || guessIcon(d);
+  const list = myDrinks();
+  const idx = drink ? list.findIndex((x) => x.id === drink.id) : -1;
+  const title = mode === 'edit' ? 'Change drink' : mode === 'new' ? 'Add a drink' : 'Something else';
   $('#sheet-custom').innerHTML = `
-    <form class="sheet-inner" id="custom-form">
-      ${sheetHead('sheet-custom', 'custom-title', 'Something else')}
-      <p class="muted small">Check the label: Australian drinks show the alcohol percentage and the number of standard drinks.</p>
+    <form class="sheet-inner" id="custom-form" data-mode="${mode}" data-id="${esc(drink?.id || '')}">
+      ${sheetHead('sheet-custom', 'custom-title', title)}
+      <fieldset class="field">
+        <legend class="label">Icon</legend>
+        <div class="icon-picker" data-touched="${drink ? 'true' : 'false'}">
+          ${DRINK_ICONS.map((i) => `
+            <label class="icon-choice">
+              <input type="radio" name="icon" value="${i.id}" ${i.id === icon ? 'checked' : ''}>
+              ${drinkIconSVG(i.id, { size: 32 })}
+              <span>${esc(i.label)}</span>
+            </label>`).join('')}
+        </div>
+      </fieldset>
       <div class="field">
         <label for="c-name">Name</label>
-        <input class="input" id="c-name" name="name" placeholder="Craft IPA" maxlength="30">
+        <input class="input" id="c-name" name="name" placeholder="Craft IPA" maxlength="30" value="${esc(d.label)}">
       </div>
       <div class="field-row">
         <div class="field">
           <label for="c-ml">Size (ml)</label>
-          <input class="input" id="c-ml" name="ml" type="number" inputmode="decimal" min="1" step="1" value="330" required>
+          <input class="input" id="c-ml" name="ml" type="number" inputmode="decimal" min="1" step="1" value="${esc(d.volumeMl ?? '')}" required>
         </div>
         <div class="field">
           <label for="c-abv">Alcohol (%)</label>
-          <input class="input" id="c-abv" name="abv" type="number" inputmode="decimal" min="0.1" max="80" step="0.1" value="6" required>
+          <input class="input" id="c-abv" name="abv" type="number" inputmode="decimal" min="0.1" max="80" step="0.1" value="${esc(d.abv ?? '')}" required>
         </div>
       </div>
-      <p>That's <span class="calc-result num" id="c-std">${fmt(standardDrinks(330, 6))}</span> standard drinks.</p>
-      <label class="check"><input type="checkbox" name="keep" checked> Save it to my drinks</label>
-      <button class="btn btn-primary btn-block" type="submit">Add this drink</button>
+      <p class="muted small">Check the label: Australian drinks show the alcohol percentage and the number of standard drinks.</p>
+      <p>That's <span class="calc-result num" id="c-std">${fmt(standardDrinks(d.volumeMl, d.abv))}</span> standard drinks.</p>
+      ${mode === 'oneoff' ? '<label class="check"><input type="checkbox" name="keep" checked> Save it to my drinks</label>' : ''}
+      ${mode === 'edit' ? `
+        <div class="btn-row move-row">
+          <button class="btn btn-sm btn-quiet" type="button" data-action="drink-move" data-dir="-1" ${idx <= 0 ? 'disabled' : ''}>Move earlier</button>
+          <button class="btn btn-sm btn-quiet" type="button" data-action="drink-move" data-dir="1" ${idx >= list.length - 1 ? 'disabled' : ''}>Move later</button>
+        </div>` : ''}
+      <div class="btn-row">
+        ${mode === 'edit' && list.length > 1 ? `<button class="btn btn-danger" type="button" data-action="drink-remove" data-id="${esc(drink.id)}">Remove</button>` : ''}
+        <button class="btn btn-primary" type="submit">${mode === 'edit' ? 'Save' : mode === 'new' ? 'Add to my drinks' : 'Add this drink'}</button>
+      </div>
     </form>`;
 }
+
+function openDrinkSheet(mode, drink) {
+  renderCustomSheet(mode, drink);
+  openSheet('sheet-custom');
+  if (mode !== 'edit') $('#c-name').focus();
+}
+
+/** Remove a drink from the list, with an undo. */
+function removeDrink(id) {
+  const list = myDrinks();
+  if (list.length <= 1) return;
+  const i = list.findIndex((x) => x.id === id);
+  if (i === -1) return;
+  const removed = list[i];
+  setMyDrinks(list.filter((x) => x.id !== id));
+  commit();
+  toast(`Removed ${removed.label}`, 'Undo', () => {
+    const now = myDrinks().slice();
+    now.splice(Math.min(i, now.length), 0, removed);
+    setMyDrinks(now);
+    commit();
+  });
+}
+
+// ---- reordering "My drinks" by holding and dragging (touch) or dragging (mouse)
+
+let drag = null;
+
+function startDrag() {
+  if (!drag) return;
+  drag.active = true;
+  drag.wrap.classList.add('dragging');
+  document.body.classList.add('drag-active');
+  if (navigator.vibrate) navigator.vibrate(10);
+}
+
+function endDrag(commitOrder) {
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  const wasActive = drag.active;
+  drag.wrap.classList.remove('dragging');
+  document.body.classList.remove('drag-active');
+  if (wasActive && commitOrder) {
+    const ids = [...document.querySelectorAll('.chip-grid.editing .chip[data-id]')].map((c) => c.dataset.id);
+    const byId = new Map(myDrinks().map((x) => [x.id, x]));
+    const reordered = ids.map((x) => byId.get(x)).filter(Boolean);
+    if (reordered.length === byId.size) setMyDrinks(reordered);
+    ui.suppressClickUntil = Date.now() + 400;
+    commit();
+  }
+  drag = null;
+}
+
+document.addEventListener('pointerdown', (ev) => {
+  const chip = ev.target.closest('.chip-grid.editing .chip[data-id]');
+  if (!chip || ev.button > 0) return;
+  drag = { chip, wrap: chip.closest('.chip-wrap'), x: ev.clientX, y: ev.clientY, id: ev.pointerId, mouse: ev.pointerType === 'mouse', active: false, timer: null };
+  if (!drag.mouse) drag.timer = setTimeout(startDrag, 280); // hold, then drag
+});
+
+document.addEventListener('pointermove', (ev) => {
+  if (!drag || ev.pointerId !== drag.id) return;
+  const moved = Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y);
+  if (!drag.active) {
+    if (drag.mouse && moved > 5) startDrag();
+    else if (!drag.mouse && moved > 10) { endDrag(false); return; } // moved before the hold: not a drag
+    if (!drag || !drag.active) return;
+  }
+  ev.preventDefault();
+  const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.chip-grid.editing .chip-wrap');
+  if (!over || over === drag.wrap || !over.querySelector('.chip[data-id]')) return;
+  const wraps = [...drag.wrap.parentElement.children];
+  if (wraps.indexOf(drag.wrap) < wraps.indexOf(over)) over.after(drag.wrap);
+  else over.before(drag.wrap);
+});
+
+document.addEventListener('pointerup', (ev) => { if (drag && ev.pointerId === drag.id) endDrag(true); });
+document.addEventListener('pointercancel', () => endDrag(false));
+document.addEventListener('contextmenu', (ev) => { if (ev.target.closest('.chip-grid.editing')) ev.preventDefault(); });
 
 // ---- plan builder
 
@@ -1200,6 +1366,8 @@ function setTab(tab) {
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== `view-${tab}`; });
   ui.deleteArmed = false;
   ui.endPlanArmed = false;
+  ui.editingDrinks = false;
+  ui.resetDrinksArmed = false;
   render();
   window.scrollTo({ top: 0 });
   try { sessionStorage.setItem('paceglass:tab', tab); } catch { /* private mode */ }
@@ -1243,7 +1411,52 @@ document.addEventListener('click', (ev) => {
       updateSettings(state, { lastPresetId: id });
       return commit();
     case 'open-custom':
-      renderCustomSheet(); openSheet('sheet-custom'); $('#c-name').focus();
+      openDrinkSheet('oneoff');
+      return;
+    case 'drinks-edit':
+      ui.editingDrinks = !ui.editingDrinks;
+      ui.resetDrinksArmed = false;
+      renderToday();
+      $('.drinks-block [data-action="drinks-edit"]')?.focus();
+      return;
+    case 'drink-edit':
+      if (Date.now() < ui.suppressClickUntil) return;
+      openDrinkSheet('edit', myDrinks().find((x) => x.id === id));
+      return;
+    case 'drink-new':
+      openDrinkSheet('new');
+      return;
+    case 'drink-remove':
+      closeSheet('sheet-custom');
+      removeDrink(id);
+      return;
+    case 'drink-move': {
+      const f = $('#custom-form');
+      const formId = f?.dataset.id;
+      const list = myDrinks();
+      const i = list.findIndex((x) => x.id === formId);
+      if (i === -1) return;
+      // Keep whatever's been typed in the sheet; only the position is saved now.
+      const draft = {
+        ...list[i],
+        label: f.name.value,
+        volumeMl: f.ml.value,
+        abv: f.abv.value,
+        icon: f.querySelector('input[name="icon"]:checked')?.value || list[i].icon,
+      };
+      setMyDrinks(moveItem(list, i, i + Number(el.dataset.dir)));
+      commit();
+      renderCustomSheet('edit', draft);
+      const again = $(`#custom-form [data-action="drink-move"][data-dir="${el.dataset.dir}"]`);
+      (again && !again.disabled ? again : $('#custom-form [type="submit"]'))?.focus();
+      return;
+    }
+    case 'drinks-reset':
+      if (!ui.resetDrinksArmed) { ui.resetDrinksArmed = true; renderToday(); return; }
+      ui.resetDrinksArmed = false;
+      setMyDrinks(defaultDrinks());
+      commit();
+      toast('My drinks is back to the standard list');
       return;
     case 'remove-entry': {
       const removed = removeEntry(state, key, id);
@@ -1404,6 +1617,14 @@ document.addEventListener('input', (ev) => {
   if (t.closest('#custom-form')) {
     const f = t.closest('#custom-form');
     $('#c-std').textContent = fmt(standardDrinks(f.ml.value, f.abv.value));
+    const picker = f.querySelector('.icon-picker');
+    if (t.name === 'icon') { picker.dataset.touched = 'true'; return; }
+    // Until they pick an icon themselves, suggest one from the name and strength.
+    if (picker.dataset.touched !== 'true') {
+      const guess = guessIcon({ label: f.name.value, abv: f.abv.value, volumeMl: f.ml.value });
+      const radio = f.querySelector(`input[name="icon"][value="${guess}"]`);
+      if (radio) radio.checked = true;
+    }
     return;
   }
   const pf = t.closest('#plan-form');
@@ -1461,14 +1682,36 @@ document.addEventListener('submit', (ev) => {
   if (ev.target.id !== 'custom-form') return;
   ev.preventDefault();
   const f = ev.target;
+  const mode = f.dataset.mode;
   const ml = parseFloat(f.ml.value), abv = parseFloat(f.abv.value);
   const std = standardDrinks(ml, abv);
   if (!std) { $('#c-std').textContent = '0'; return; }
   const label = f.name.value.trim() || `${ml} ml at ${abv}%`;
+  const chosen = f.querySelector('input[name="icon"]:checked')?.value;
+  const icon = DRINK_ICON_IDS.includes(chosen) ? chosen : guessIcon({ label, abv, volumeMl: ml });
+  const drink = { label, detail: `${ml} ml, ${abv}%`, volumeMl: ml, abv, std, icon };
+
+  if (mode === 'edit') {
+    const list = myDrinks().map((x) => (x.id === f.dataset.id ? { ...x, ...drink } : x));
+    setMyDrinks(list);
+    commit();
+    closeSheet('sheet-custom');
+    toast(`Saved ${label}`);
+    return;
+  }
+  if (mode === 'new') {
+    setMyDrinks([...myDrinks(), { id: `custom-${Date.now().toString(36)}`, ...drink }]);
+    commit();
+    closeSheet('sheet-custom');
+    toast(`Added ${label} to your drinks`);
+    return;
+  }
+
+  // 'oneoff': log it now, and save it to the list if ticked.
   if (f.keep.checked) {
     const presetId = `custom-${Date.now().toString(36)}`;
-    const custom = [...(state.settings.customPresets || []), { id: presetId, label, detail: `${ml} ml, ${abv}%`, volumeMl: ml, abv, std }];
-    updateSettings(state, { customPresets: custom, lastPresetId: presetId });
+    setMyDrinks([...myDrinks(), { id: presetId, ...drink }]);
+    updateSettings(state, { lastPresetId: presetId });
   }
   closeSheet('sheet-custom');
   if (ui.editingDay && $('#sheet-day').open) {

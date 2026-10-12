@@ -28,6 +28,11 @@
 - [x] "Continue without signing in" for local-only use
 - [x] New code, edit, pause and remove in the admin console
 
+## v0.5
+
+- [x] Editable "My drinks": add, change, remove (with undo), hold-and-drag to reorder, drink icons
+- [x] Refresh button and automatic updates
+
 ## Next: things to learn from testing
 
 - Is tapping the glass obvious, or does it need a separate "Add" button?
@@ -43,7 +48,6 @@
 - **Take-a-break length.** "30 days" or "until 1 Feb", with a countdown and a finish-line moment.
 - **Mood and craving check-ins.** A one-tap daily mood and craving strength, so insights can say things like "your cravings have dropped since week one".
 - **Night-out plans.** "Tonight I'll have no more than 2." The glass shows the plan line, and you get a gentle nudge when you reach it.
-- **Edit and reorder drink chips.** Delete or rename saved custom drinks.
 - **Milestones.** Quiet acknowledgement at 1, 7, 30, 90 and 365 days alcohol-free.
 - **End-to-end encryption** of the saved log, so not even the Firebase project owner could read it.
 - **App stores.** Wrap the same code with Capacitor for iOS and Android if wider distribution is wanted.

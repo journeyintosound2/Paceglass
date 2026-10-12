@@ -11,6 +11,7 @@ Every day on the calendar is a glass. Log drinks as you go and it fills up. An a
 - **Tap as you go.** Pick what you're drinking, then tap the big glass each time you have one. There's an undo straight after, and a pace note ("Last drink 25 min ago").
 - **Calendar.** Each day shows how full its glass was. Tap any past day to fill it in, add drinks, change the total or mark it alcohol-free.
 - **Australian standard drinks.** A standard drink is 10 g of alcohol. There are presets for schooners, middies, cans, wine, sparkling, spirits and premixes, and you can add your own from the size and ABV on the label.
+- **My drinks.** Tap the pencil to edit the list: × removes a drink (with undo), **+** adds one, tapping a drink changes it, and holding and dragging reorders the list. There are also **Move earlier/later** buttons in each drink's edit screen. Each drink has an icon: beer, red wine, white wine, spirit or can.
 - **Step-down plans.** For someone drinking heavily, Paceglass builds a week-by-week taper from where they are now (say 70 a week) to where they want to be (10 a week, or alcohol-free). Each step has its own weekly and daily limit. Alcohol-free days only start once a step is down to about 4 a day. At the start of each step there's a check-in: if the last step went over, the user can repeat it. An "I'm getting withdrawal symptoms" button shows the signs that need 000 and can slow the plan down (back up to the last comfortable level for a week, then about 10% a week).
 - **Three goals:**
   - **Cut back:** weekly and daily limits, defaulting to the NHMRC guideline of 10 a week and 4 a day.
@@ -79,7 +80,8 @@ js/stats.js             Weekly totals, streaks, drinks avoided, savings
 js/insights.js          Timeline and plan-stage content, messages, safety text, support lines
 js/plan.js              Step-down plan maths: build, current step, repeat a step, slow down
 js/limits.js            Which limits apply on a given day (plan step or Settings)
-js/drinks.js            Standard drink formula and Australian presets
+js/drinks.js            Standard drink formula, Australian presets, My drinks helpers
+js/drink-icons.js       The five drink icons
 js/dates.js             Local-date helpers (days are stored as YYYY-MM-DD)
 js/glass.js             The glass drawing used across the app
 sw.js                   Service worker for offline use
